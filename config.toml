@@ -1,0 +1,15 @@
+[channel]
+secret = "<YOUR CHANNEL SECRET>"
+token = "<YOUR CHANNEL TOKEN>"
+
+[message]
+broadcast_url = "https://api.line.me/v2/bot/message/broadcast"
+reply_url = "https://api.line.me/v2/bot/message/reply"
+
+[chatgpt]
+secret = "<YOUR CHATGPT API SECRET>"
+chat_completions_url = "https://api.openai.com/v1/chat/completions"
+model = "gpt-3.5-turbo"
+
+[rss]
+feed_url = "https://www.daemonology.net/hn-daily/index.rss"
