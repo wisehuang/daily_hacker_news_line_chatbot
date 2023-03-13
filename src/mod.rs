@@ -65,8 +65,8 @@ pub async fn parse_request_handler(
 ) -> Result<impl Reply, Rejection> {
     match is_signature_valid(x_line_signature, &body) {
         Ok(_) => {}
-        Err(_) => {
-            let error_msg = json!({"success": false, "error": "Invalid signature"});
+        Err(e) => {
+            let error_msg = json!({"success": false, "error": e.to_string()});
             let response = warp::reply::with_status(
                 warp::reply::json(&error_msg),
                 warp::http::StatusCode::BAD_REQUEST,
@@ -180,7 +180,7 @@ pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
         messages: vec![message],
     };
 
-    let url = get_config("broadcast_url");
+    let url = get_config("message.broadcast_url");
 
     let json_body = serde_json::to_string(&request_body).unwrap();
 
