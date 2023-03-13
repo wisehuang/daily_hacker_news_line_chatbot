@@ -86,16 +86,20 @@ pub async fn parse_request_handler(
         .and_then(|event| event["message"].get("text"))
         .and_then(|text| text.as_str());
 
+    // Extract the 'replyToken' field from the first event in the request body
     let reply_token = json_value["events"][0]["replyToken"].as_str();
 
+    // If the message is "today", reply with the latest stories
     if "today" == text.unwrap() {        
         reply_latest_story(&channel_token, &reply_token.unwrap().to_string()).await;
     }
 
+    // If the message can be parsed as a valid index (i.e., a positive integer), reply with the TL;DR for that story
     if let Ok(index) = text.unwrap().parse::<usize>() {
         match reply_tldr(&channel_token, &reply_token.unwrap().to_string(), index).await {
-            Ok(_) => {}
-            Err(_) => {
+            Ok(_) => {} // If the TL;DR is sent successfully, do nothing
+            Err(_) => { 
+                // If there's an error sending the TL;DR, reply with an error message
                 reply_error(&channel_token, &reply_token.unwrap().to_string()).await;
             }
         }
