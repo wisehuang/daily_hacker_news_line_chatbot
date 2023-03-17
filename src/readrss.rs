@@ -2,6 +2,7 @@ use scraper::{Html, Selector};
 use rss::{Channel, Item};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
+use crate::config_helper::get_config;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Story {
@@ -10,7 +11,7 @@ pub struct Story {
 }
 
 pub async fn read_feed() -> Result<Channel, Box<dyn Error>> {
-    let url = crate::r#mod::get_config("rss.feed_url");
+    let url = get_config("rss.feed_url");
     let content = reqwest::get(url)
         .await?
         .bytes()

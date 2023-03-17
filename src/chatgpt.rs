@@ -1,5 +1,6 @@
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
+use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use crate::config_helper::get_config;
 
 #[derive(Debug, Serialize)]
 struct ChatRequest {
@@ -44,7 +45,7 @@ struct Message {
 }
 
 pub async fn get_chatgpt_summary(tldr_page_url: String) -> String {
-    let api_secret = crate::r#mod::get_config("chatgpt.secret");
+    let api_secret = get_config("chatgpt.secret");
 
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
@@ -54,9 +55,9 @@ pub async fn get_chatgpt_summary(tldr_page_url: String) -> String {
         format!("Bearer {}", api_secret).parse().unwrap(),
     );
 
-    let url = crate::r#mod::get_config("chatgpt.chat_completions_url");
+    let url = get_config("chatgpt.chat_completions_url");
 
-    let model = crate::r#mod::get_config("chatgpt.model");
+    let model = get_config("chatgpt.model");
 
     let _content = String::from("tldr ") + tldr_page_url.as_str();
 
