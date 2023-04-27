@@ -3,6 +3,7 @@ use warp::Filter;
 
 mod r#mod;
 mod chatgpt;
+mod kagi;
 mod readrss;
 mod request_handler;
 mod config_helper;

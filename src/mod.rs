@@ -2,7 +2,7 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 
 use crate::{
-    chatgpt,
+    kagi,
     line_helper,
     readrss,
     config_helper,
@@ -149,7 +149,7 @@ async fn reply_tldr(token: &str, reply_token: &str, index: usize) -> Result<impl
     let stories = readrss::get_last_hn_stories().await;
     let story = &stories[index - 1];
 
-    let story_summary = chatgpt::get_chatgpt_summary(story.storylink.to_owned()).await;
+    let story_summary = kagi::get_kagi_summary(story.storylink.to_owned()).await;
 
     reply_message(token, reply_token, story_summary.as_str()).await
 }
