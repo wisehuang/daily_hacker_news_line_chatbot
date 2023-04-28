@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 
 use crate::{
     kagi,
+    chatgpt,
     line_helper,
     readrss,
     config_helper,
@@ -130,6 +131,22 @@ pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
     request_handler::handle_send_request(token, json_body, url.as_str()).await
 }
 
+pub async fn broadcast_daily_summary() -> Result<impl Reply, Rejection> {
+    let token = &config_helper::get_config("channel.token");
+
+    let url = config_helper::get_config("message.broadcast_url");
+
+    let message = get_chatgpt_summary().await;
+
+    let request_body = LineBroadcastRequest {
+        messages: vec![message],
+    };
+
+    let json_body = serde_json::to_string(&request_body).unwrap();
+
+    request_handler::handle_send_request(token, json_body, url.as_str()).await
+}
+
 async fn reply_latest_story(token: &str, reply_token: &str) -> Result<impl Reply, Rejection> {
     let message = convert_stories_to_message().await;
 
@@ -187,6 +204,13 @@ async fn reply_message(
 }
 
 async fn convert_stories_to_message() -> LineMessage {
+    let message_text = combine_stories().await;
+
+    let message = convert_to_line_message(message_text).await;
+    message
+}
+
+async fn combine_stories() -> String {
     let stories = readrss::get_last_hn_stories().await;
     let message_text = stories
         .iter()
@@ -194,10 +218,23 @@ async fn convert_stories_to_message() -> LineMessage {
         .map(|(i, s)| format!("{}. {} ({})", i + 1, s.story.clone(), s.storylink))
         .collect::<Vec<String>>()
         .join("\n\n");
+    message_text
+}
 
+async fn get_chatgpt_summary() -> LineMessage {
+    let stories = combine_stories().await;
+    let summary = chatgpt::get_chatgpt_summary(stories).await;
+
+    log::info!("summary message: {}", summary);
+
+    let message = convert_to_line_message(summary).await;
+    message
+}
+
+async fn convert_to_line_message(summary: String) -> LineMessage {
     let message = LineMessage {
         message_type: "text".to_string(),
-        text: message_text,
+        text: summary,
     };
     message
 }

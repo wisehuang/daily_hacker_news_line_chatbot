@@ -36,6 +36,10 @@ async fn main() {
     .and(warp::path("sendTodayStories"))
     .and_then(r#mod::send_line_broadcast);
 
+    let broadcast_daily_summary_route = warp::get()
+    .and(warp::path("broadcastDailySummary"))
+    .and_then(r#mod::broadcast_daily_summary);
+
     let log_filter = warp::log("daily_hacker_news_bot");
 
     let routes = parse_request_route
@@ -43,6 +47,7 @@ async fn main() {
     .or(latest_title_route)
     .or(get_stories_route)
     .or(send_line_broadcast_route)
+    .or(broadcast_daily_summary_route)
     .with(log_filter);
 
     warp::serve(routes).run(([0, 0, 0, 0], 3030)).await;
