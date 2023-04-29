@@ -7,6 +7,8 @@ This is a LINE chatbot that sends daily hacker news to friends. The news source 
 To run this project, you need to have the following:
 * A LINE developer account
 * A channel access token and channel secret for your LINE channel
+* An OpenAI API token
+* A Kagi API token
 * A server to host the webhook endpoint
 
 ## Installation
