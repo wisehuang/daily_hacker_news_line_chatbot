@@ -1,6 +1,6 @@
+use crate::config_helper::get_config;
 use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use crate::config_helper::get_config;
 
 #[derive(Debug, Serialize)]
 struct KagiSummaryRequest {
@@ -34,10 +34,7 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
-    headers.insert(
-        AUTHORIZATION,
-        format!("Bot {}", api_token).parse().unwrap(),
-    );
+    headers.insert(AUTHORIZATION, format!("Bot {}", api_token).parse().unwrap());
 
     let url = get_config("kagi.kagi_summarize_url");
 
@@ -45,15 +42,15 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
 
     let target_language = get_config("kagi.target_language");
 
-    let _content = String::from(tldr_page_url.as_str());
-
     let request = KagiSummaryRequest {
-        url: _content,
+        url: tldr_page_url,
         engine: engine,
         target_language: target_language,
     };
 
     let json_body = serde_json::to_string(&request).unwrap();
+
+    log::info!("Kagi summary API request: {}", json_body);
 
     let response = client
         .post(url)
@@ -64,10 +61,18 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
         .unwrap();
 
     let response_text = response.text().await.unwrap();
-    let response_struct: KagiSummaryResponse = serde_json::from_str(&response_text).unwrap();
 
-    let res_content = response_struct.data.output.clone();
-    let clean_res_content = res_content.replace("\n", "");
+    log::info!("Kagi summary API response: {}", response_text);
 
-    return clean_res_content;
+    let response_struct: Result<KagiSummaryResponse, serde_json::Error> = serde_json::from_str(&response_text);
+
+    match response_struct {
+        Ok(_response) => {
+            let res_content = _response.data.output.clone();
+            return res_content.replace("\n", "");
+        },
+        Err(e) => {
+            return "No summary found.".to_string();
+        }
+    }
 }
