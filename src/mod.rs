@@ -1,16 +1,11 @@
 use bytes::Bytes;
 use serde_json::{json, Value};
 
-use crate::{
-    kagi,
-    chatgpt,
-    line_helper,
-    readrss,
-    config_helper,
-    request_handler,
-};
+use crate::{chatgpt, config_helper, kagi, line_helper, readrss, request_handler};
 
-use crate::line_helper::{LineMessage, LineBroadcastRequest, LineMessageRequest};
+use crate::line_helper::{
+    LineBroadcastRequest, LineMessage, LineMessageRequest, LineSendMessageRequest,
+};
 
 use warp::{
     http::{Response, StatusCode},
@@ -21,22 +16,32 @@ pub async fn parse_request_handler(
     x_line_signature: String,
     body: Bytes,
 ) -> Result<impl Reply, Rejection> {
-    match line_helper::is_signature_valid(x_line_signature, &body) {
-        Ok(_) => {}
-        Err(e) => {
+    // Check if the signature is valid
+    line_helper::is_signature_valid(x_line_signature, &body)
+        .map_err(|e| {
             let error_msg = json!({"success": false, "error": e.to_string()});
-            let response = warp::reply::with_status(
+            warp::reply::with_status(
                 warp::reply::json(&error_msg),
                 warp::http::StatusCode::BAD_REQUEST,
-            );
-            return Ok(response);
-        }
-    }
+            )
+            .into_response()
+        })
+        .unwrap();
 
+    // Get the channel token from the configuration file
     let channel_token = config_helper::get_config("channel.token");
 
     // Parse the body as a LineWebhookRequest
-    let json_value: Value = serde_json::from_slice(&body).unwrap();
+    let json_value: Value = serde_json::from_slice(&body)
+        .map_err(|e| {
+            let error_msg = json!({"success": false, "error": e.to_string()});
+            warp::reply::with_status(
+                warp::reply::json(&error_msg),
+                warp::http::StatusCode::BAD_REQUEST,
+            )
+            .into_response()
+        })
+        .unwrap();
 
     // Extract the text from the first message
     let text = json_value["events"]
@@ -46,39 +51,64 @@ pub async fn parse_request_handler(
 
     let reply_token = json_value["events"][0]["replyToken"].as_str();
 
-    if "today" == text.unwrap() {
-        reply_latest_story(&channel_token, &reply_token.unwrap().to_string()).await?;
+    let user_id = json_value["events"][0]["source"]["userId"].as_str();
+
+    // Handle "today" command
+    if let Some("today") = text {
+        reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
+            .await
+            .map_err(|e| {
+                let error_msg = json!({"success": false, "error": "Error sending message"});
+                warp::reply::with_status(
+                    warp::reply::json(&error_msg),
+                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                )
+                .into_response()
+            })
+            .unwrap();
     }
 
-    if let Ok(index) = text.unwrap().parse::<usize>() {
-        if index < 1 || index > 10 {
-            reply_error(
-                &channel_token,
-                &reply_token.unwrap().to_string(),
-                "Incorrect number",
-            )
-            .await?;
-        }
-
-        match reply_tldr(&channel_token, &reply_token.unwrap().to_string(), index).await {
-            Ok(_) => {}
-            Err(_) => {
+    // Handle index command
+    if let Some(index_str) = text {
+        if let Ok(index) = index_str.parse::<usize>() {
+            if index < 1 || index > 10 {
                 reply_error(
                     &channel_token,
                     &reply_token.unwrap().to_string(),
-                    "Something wrong, please try again",
+                    "Incorrect number",
                 )
-                .await?;
+                .await
+                .map_err(|e| {
+                    let error_msg = json!({"success": false, "error": "Error reply message"});
+                    warp::reply::with_status(
+                        warp::reply::json(&error_msg),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    )
+                    .into_response()
+                })
+                .unwrap();
+            } else {
+                push_summary(&channel_token, &user_id.unwrap(), index)
+                    .await
+                    .map_err(|_e| {
+                        let error_msg = json!({"success": false, "error": "Error push summary"});
+                        warp::reply::with_status(
+                            warp::reply::json(&error_msg),
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response()
+                    })
+                    .unwrap();
             }
         }
     }
 
+    // Return success response
     Ok(warp::reply::with_status(
         warp::reply::json(&json!({"success": true})),
         warp::http::StatusCode::OK,
     ))
 }
-
 
 pub async fn get_latest_stories() -> Result<impl Reply, Rejection> {
     let stories = readrss::get_last_hn_stories().await;
@@ -162,13 +192,16 @@ async fn reply_latest_story(token: &str, reply_token: &str) -> Result<impl Reply
     request_handler::handle_send_request(token, json_body, url.as_str()).await
 }
 
-async fn reply_tldr(token: &str, reply_token: &str, index: usize) -> Result<impl Reply, Rejection> {
+async fn push_summary(token: &str, user_id: &str, index: usize) -> Result<impl Reply, Rejection> {
     let stories = readrss::get_last_hn_stories().await;
     let story = &stories[index - 1];
 
     let story_summary = kagi::get_kagi_summary(story.storylink.to_owned()).await;
 
-    reply_message(token, reply_token, story_summary.as_str()).await
+    let summary_zhtw = chatgpt::translate_to_zhtw(story_summary).await.unwrap();
+
+    let result = push_message(token, user_id, summary_zhtw.as_str()).await;
+    result
 }
 
 async fn reply_error(
@@ -177,6 +210,29 @@ async fn reply_error(
     error_msg: &str,
 ) -> Result<impl Reply, Rejection> {
     reply_message(token, reply_token, error_msg).await
+}
+
+async fn push_message(
+    token: &str,
+    user_id: &str,
+    text: &str,
+) -> Result<impl Reply + Sized + Sized, Rejection> {
+    let request = LineSendMessageRequest {
+        to: user_id.to_string(),
+        messages: vec![LineMessage {
+            message_type: "text".to_string(),
+            text: text.to_string(),
+        }],
+    };
+
+    let json_body = serde_json::to_string(&request).unwrap();
+
+    log::info!("{}", &json_body);
+
+    let url = config_helper::get_config("message.push_url");
+
+    request_handler::handle_send_request(token, json_body, url.as_str()).await
+
 }
 
 async fn reply_message(
@@ -189,12 +245,12 @@ async fn reply_message(
         text: text.to_string(),
     };
 
-    let request_body = LineMessageRequest {
+    let request = LineMessageRequest {
         replyToken: reply_token.to_string(),
         messages: vec![message],
     };
 
-    let json_body = serde_json::to_string(&request_body).unwrap();
+    let json_body = serde_json::to_string(&request).unwrap();
 
     log::info!("{}", &json_body);
 
@@ -223,7 +279,7 @@ async fn combine_stories() -> String {
 
 async fn get_chatgpt_summary() -> LineMessage {
     let stories = combine_stories().await;
-    let summary = chatgpt::get_chatgpt_summary(stories).await;
+    let summary = chatgpt::get_chatgpt_summary(stories).await.unwrap();
 
     log::info!("summary message: {}", summary);
 

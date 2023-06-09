@@ -38,6 +38,12 @@ pub struct LineErrorDetail {
     pub property: String,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct LineSendMessageRequest {
+    pub to: String,
+    pub messages: Vec<LineMessage>,
+}
+
 pub fn generate_signature(channel_secret: &str, body: &[u8]) -> String {
     let mut hmac_sha256 =
         Hmac::<Sha256>::new_from_slice(channel_secret.as_bytes()).expect("Failed to create HMAC");
