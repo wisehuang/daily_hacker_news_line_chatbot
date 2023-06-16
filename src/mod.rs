@@ -32,16 +32,7 @@ pub async fn parse_request_handler(
     let channel_token = config_helper::get_config("channel.token");
 
     // Parse the body as a LineWebhookRequest
-    let json_value: Value = serde_json::from_slice(&body)
-        .map_err(|e| {
-            let error_msg = json!({"success": false, "error": e.to_string()});
-            warp::reply::with_status(
-                warp::reply::json(&error_msg),
-                warp::http::StatusCode::BAD_REQUEST,
-            )
-            .into_response()
-        })
-        .unwrap();
+    let json_value: Value = serde_json::from_slice(&body).unwrap();
 
     // Extract the text from the first message
     let text = json_value["events"]
@@ -53,33 +44,13 @@ pub async fn parse_request_handler(
 
     let user_id = json_value["events"][0]["source"]["userId"].as_str();
 
-    // Handle "today" command
-    if let Some("today") = text {
-        reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
-            .await
-            .map_err(|e| {
-                let error_msg = json!({"success": false, "error": "Error sending message"});
-                warp::reply::with_status(
-                    warp::reply::json(&error_msg),
-                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                )
-                .into_response()
-            })
-            .unwrap();
-    }
-
-    // Handle index command
-    if let Some(index_str) = text {
-        if let Ok(index) = index_str.parse::<usize>() {
-            if index < 1 || index > 10 {
-                reply_error(
-                    &channel_token,
-                    &reply_token.unwrap().to_string(),
-                    "Incorrect number",
-                )
+    match text {
+        // Handle "today" command
+        Some("today") => {
+            reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
                 .await
-                .map_err(|e| {
-                    let error_msg = json!({"success": false, "error": "Error reply message"});
+                .map_err(|_e| {
+                    let error_msg = json!({"success": false, "error": "Error sending message"});
                     warp::reply::with_status(
                         warp::reply::json(&error_msg),
                         warp::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -87,20 +58,30 @@ pub async fn parse_request_handler(
                     .into_response()
                 })
                 .unwrap();
-            } else {
-                push_summary(&channel_token, &user_id.unwrap(), index)
-                    .await
-                    .map_err(|_e| {
-                        let error_msg = json!({"success": false, "error": "Error push summary"});
-                        warp::reply::with_status(
-                            warp::reply::json(&error_msg),
-                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        )
-                        .into_response()
-                    })
-                    .unwrap();
-            }
         }
+        // if input is number
+        Some(index_str)
+            if index_str
+                .parse::<usize>()
+                .map_or(false, |index| index >= 1 && index <= 10) => 
+        {
+            push_summary(
+                &channel_token,
+                &user_id.unwrap(),
+                index_str.parse::<usize>().unwrap(),
+            )
+            .await
+            .map_err(|_e| {
+                let error_msg = json!({"success": false, "error": "Error push summary"});
+                warp::reply::with_status(
+                    warp::reply::json(&error_msg),
+                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                )
+                .into_response()
+            })
+            .unwrap();
+        }
+        _ => {}
     }
 
     // Return success response
@@ -116,34 +97,33 @@ pub async fn get_latest_stories() -> Result<impl Reply, Rejection> {
 }
 
 pub async fn get_latest_title() -> Result<impl Reply, Rejection> {
-    match readrss::read_feed().await {
-        Ok(channel) => {
-            if let Some(latest_item) = readrss::get_latest_item(&channel) {
-                let latest_title = latest_item.title().unwrap_or("Untitled item").to_string();
-                let response = Response::builder()
-                    .header("content-type", "text/plain")
-                    .status(StatusCode::OK)
-                    .body(Bytes::from(latest_title))
-                    .unwrap();
-                Ok(response)
-            } else {
-                let response = Response::builder()
-                    .header("content-type", "text/plain")
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Bytes::from("No items in feed"))
-                    .unwrap();
-                Ok(response)
-            }
-        }
-        Err(_) => {
-            let response = Response::builder()
-                .header("content-type", "text/plain")
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Bytes::from("Error fetching feed"))
-                .unwrap();
-            Ok(response)
-        }
-    }
+    let channel = readrss::read_feed()
+        .await
+        .map_err(|_| reply_error_msg("Error fetching feed", StatusCode::INTERNAL_SERVER_ERROR))
+        .unwrap();
+
+    let latest_item = readrss::get_latest_item(&channel)
+        .ok_or_else(|| reply_error_msg("No items in feed", StatusCode::NOT_FOUND))
+        .unwrap();
+
+    let latest_title = latest_item.title().unwrap_or("Untitled item").to_string();
+
+    let response = Response::builder()
+        .header("content-type", "text/plain")
+        .status(StatusCode::OK)
+        .body(Bytes::from(latest_title))
+        .unwrap();
+
+    Ok(response)
+}
+
+fn reply_error_msg(error: &'static str, status: StatusCode) -> Response<Bytes> {
+    let error_msg = Bytes::from(error);
+    Response::builder()
+        .header("content-type", "text/plain")
+        .status(status)
+        .body(error_msg)
+        .unwrap()
 }
 
 pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
@@ -232,7 +212,6 @@ async fn push_message(
     let url = config_helper::get_config("message.push_url");
 
     request_handler::handle_send_request(token, json_body, url.as_str()).await
-
 }
 
 async fn reply_message(
