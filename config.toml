@@ -5,6 +5,7 @@ token = "<YOUR CHANNEL TOKEN>"
 [message]
 broadcast_url = "https://api.line.me/v2/bot/message/broadcast"
 reply_url = "https://api.line.me/v2/bot/message/reply"
+push_url = "https://api.line.me/v2/bot/message/push"
 
 [chatgpt]
 secret = "<YOUR CHATGPT API SECRET>"

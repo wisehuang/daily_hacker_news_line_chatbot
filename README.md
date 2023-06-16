@@ -28,6 +28,9 @@ cargo build --release
 ```
 6. The service will start listening to port 3030.
 
+## Daily Hacker News Chatbot
+![QR Code](https://github.com/wisehuang/daily_hacker_news_line_chatbot/blob/main/623yruqr.png)
+
 ## Contributing
 
 Pull requests are welcome. For major changes, please open an issue first
