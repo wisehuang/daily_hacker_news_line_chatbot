@@ -51,10 +51,10 @@ pub async fn parse_request_handler(
     // Check if the signature is valid
     line_helper::is_signature_valid(x_line_signature, &body)
         .map_err(|e| {
-            let error_msg = json!({"success": false, "error": e.to_string()});
+            let error_msg = json!({"success": false, "error": "Invalid signature"});
             warp::reply::with_status(
                 warp::reply::json(&error_msg),
-                warp::http::StatusCode::BAD_REQUEST,
+                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
             )
             .into_response()
         })
@@ -84,46 +84,52 @@ pub async fn parse_request_handler(
 
     log::info!("function_call: {}", function_call);
 
+    function_call_handler(function_call, channel_token, reply_token, user_id).await;
+
+    Ok(warp::reply::with_status(
+        warp::reply::json(&json!({"success": true})),
+        warp::http::StatusCode::OK,
+    ))
+}
+
+async fn function_call_handler(function_call: Value, channel_token: String, reply_token: Option<&str>, user_id: Option<&str>) {
     match function_call.get("name").and_then(Value::as_str) {
-        Some(function_name) => {            
-            let arguments = function_call["arguments"]
-                .as_str()
-                .unwrap()
-                .replace("\n", "");
-
-            log::info!("arguments: {}", arguments);
-
-            if function_name == "reply_latest_story" {
-                reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
-                    .await
-                    .map_err(|_e| {
-                        let error_msg = json!({"success": false, "error": "Error sending message"});
-                        warp::reply::with_status(
-                            warp::reply::json(&error_msg),
-                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        )
-                        .into_response()
-                    })
-                    .unwrap();
-            } else if function_name == "push_summary" {
-                let arguments: Value = serde_json::from_str(arguments.as_str()).unwrap();
-                let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
-
-                push_summary(&channel_token, &user_id.unwrap(), index)
-                    .await
-                    .map_err(|_e| {
-                        let error_msg = json!({"success": false, "error": "Error push summary"});
-                        warp::reply::with_status(
-                            warp::reply::json(&error_msg),
-                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        )
-                        .into_response()
-                    })
-                    .unwrap();
-            }           
+        Some("reply_latest_story") => {
+            reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
+                .await
+                .map_err(|_e| {
+                    let error_msg = json!({"success": false, "error": "Error reply latest story"});
+                    warp::reply::with_status(
+                        warp::reply::json(&error_msg),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    )
+                    .into_response()
+                })
+                .unwrap();
         }
-        None => {           
-            push_message(&channel_token, &user_id.unwrap(), function_call["message"].as_str().unwrap())
+        Some("push_summary") => {
+            let arguments: Value =
+                serde_json::from_str(function_call["arguments"].as_str().unwrap()).unwrap();
+            let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
+
+            push_summary(&channel_token, &user_id.unwrap(), index)
+                .await
+                .map_err(|_e| {
+                    let error_msg = json!({"success": false, "error": "Error push summary"});
+                    warp::reply::with_status(
+                        warp::reply::json(&error_msg),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    )
+                    .into_response()
+                })
+                .unwrap();
+        }
+        _ => {
+            push_message(
+                &channel_token,
+                &user_id.unwrap(),
+                function_call["message"].as_str().unwrap(),
+            )
             .await
             .map_err(|_e| {
                 let error_msg = json!({"success": false, "error": "Error push message"});
@@ -136,11 +142,6 @@ pub async fn parse_request_handler(
             .unwrap();
         }
     }
-
-    Ok(warp::reply::with_status(
-        warp::reply::json(&json!({"success": true})),
-        warp::http::StatusCode::OK,
-    ))
 }
 
 pub async fn get_latest_stories() -> Result<impl Reply, Rejection> {
