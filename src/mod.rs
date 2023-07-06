@@ -16,37 +16,30 @@ pub async fn conversation_handler(content: Bytes) -> Result<impl Reply, Rejectio
     let conversions = String::from_utf8(content.to_vec()).unwrap();
     let res = chatgpt::run_conversation(conversions).await;
 
-    let function_call: Value =
-        serde_json::from_str(res.as_ref().unwrap().as_str()).unwrap();
-    let function_name = function_call["name"].as_str().unwrap();
+    let function_call: Value = serde_json::from_str(res.as_ref().unwrap().as_str()).unwrap();
 
-    let arguments_value = function_call["arguments"].as_str().unwrap().replace("\n", "");
-    let arguments: Value = serde_json::from_str(arguments_value.as_str()).unwrap();
+    log::info!("function_call: {}", function_call);
 
-    println!("arguments: {}", arguments);
+    match function_call.get("name").and_then(Value::as_str) {
+        Some(function_name) => {
+            let arguments_value = function_call["arguments"].as_str().unwrap();
+            let arguments: Value = serde_json::from_str(arguments_value).unwrap();
 
-    if function_name == "push_summary" {
-        let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
-        println!("index: {}", index);
-    }
+            log::info!("arguments: {}", arguments);
 
-    match res {
-        Ok(result) => {
-            let response = warp::reply::json(&json!({
-                "success": true,
-                "result": result.as_str(),
-            }));
+            if function_name == "push_summary" {
+                let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
+                log::info!("index: {}", index);
+            }
+
+            let response = warp::reply::json(&json!(function_call));
             Ok(warp::reply::with_status(response, StatusCode::OK))
         }
-        Err(error) => {
+        None => {
             let response = warp::reply::json(&json!({
-                "success": false,
-                "error": error.to_string(),
+                "message": function_call["message"].as_str().unwrap(),
             }));
-            Ok(warp::reply::with_status(
-                response,
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ))
+            Ok(warp::reply::with_status(response, StatusCode::OK))
         }
     }
 }
@@ -87,35 +80,53 @@ pub async fn parse_request_handler(
 
     let res = chatgpt::run_conversation(text).await.unwrap();
 
-    if !res.is_empty() {
-        let function_call: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
-        let function_name = function_call["name"].as_str().unwrap();
-        let arguments_value = function_call["arguments"].as_str().unwrap().replace("\n", "");
+    let function_call: Value = serde_json::from_str(res.as_str()).unwrap();
 
-        if function_name == "reply_latest_story" {
-            reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
-                .await
-                .map_err(|_e| {
-                    let error_msg = json!({"success": false, "error": "Error sending message"});
-                    warp::reply::with_status(
-                        warp::reply::json(&error_msg),
-                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    )
-                    .into_response()
-                })
-                .unwrap();
-        } else if function_name == "push_summary" {            
-            let arguments: Value = serde_json::from_str(arguments_value.as_str()).unwrap();
-            let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
+    log::info!("function_call: {}", function_call);
 
-            push_summary(
-                &channel_token,
-                &user_id.unwrap(),
-                index,
-            )
+    match function_call.get("name").and_then(Value::as_str) {
+        Some(function_name) => {            
+            let arguments = function_call["arguments"]
+                .as_str()
+                .unwrap()
+                .replace("\n", "");
+
+            log::info!("arguments: {}", arguments);
+
+            if function_name == "reply_latest_story" {
+                reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
+                    .await
+                    .map_err(|_e| {
+                        let error_msg = json!({"success": false, "error": "Error sending message"});
+                        warp::reply::with_status(
+                            warp::reply::json(&error_msg),
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response()
+                    })
+                    .unwrap();
+            } else if function_name == "push_summary" {
+                let arguments: Value = serde_json::from_str(arguments.as_str()).unwrap();
+                let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
+
+                push_summary(&channel_token, &user_id.unwrap(), index)
+                    .await
+                    .map_err(|_e| {
+                        let error_msg = json!({"success": false, "error": "Error push summary"});
+                        warp::reply::with_status(
+                            warp::reply::json(&error_msg),
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response()
+                    })
+                    .unwrap();
+            }           
+        }
+        None => {           
+            push_message(&channel_token, &user_id.unwrap(), function_call["message"].as_str().unwrap())
             .await
             .map_err(|_e| {
-                let error_msg = json!({"success": false, "error": "Error push summary"});
+                let error_msg = json!({"success": false, "error": "Error push message"});
                 warp::reply::with_status(
                     warp::reply::json(&error_msg),
                     warp::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -124,13 +135,6 @@ pub async fn parse_request_handler(
             })
             .unwrap();
         }
-    } else {
-        let error_msg = json!({"success": false, "error": "Error sending message"});
-        warp::reply::with_status(
-            warp::reply::json(&error_msg),
-            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-        )
-        .into_response();
     }
 
     Ok(warp::reply::with_status(

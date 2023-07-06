@@ -121,7 +121,9 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
                 "arguments": function_args,
             }))
         } else {
-            None
+            Some(json!({
+                "message": choices[0]["message"]["content"].as_str().unwrap(),
+            }))
         }
     } else {
         None
