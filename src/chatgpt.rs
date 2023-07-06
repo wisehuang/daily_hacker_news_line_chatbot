@@ -1,6 +1,7 @@
+use crate::config_helper::get_config;
+use crate::json;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use crate::config_helper::get_config;
 
 #[derive(Debug, Serialize)]
 struct ChatRequest {
@@ -49,6 +50,85 @@ struct Message {
     content: String,
 }
 
+pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::error::Error>> {
+    let api_key = get_config("chatgpt.secret");
+    let url = get_config("chatgpt.chat_completions_url");
+    let model = get_config("chatgpt.model");
+
+    let messages = vec![json!({
+        "role": "user",
+        "content": content,
+    })];
+
+    let functions = vec![
+        json!({
+            "name": "reply_latest_story",
+            "description": "Get the latest story from daily Hacker News RSS feed",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "token": {
+                        "type": "string",
+                        "description": "Channel access tokens as a means of authentication for the channel",
+                    },
+                    "reply_token": {
+                        "type": "string",
+                        "description": "Reply token that is used when sending a reply message"},
+                },
+                "required": ["token", "reply_token"],
+            },
+        }),
+        json!({
+            "name": "push_summary",
+            "description": "Push the selected news (by index, start from 1, maximum is 10) summary to the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "token": {
+                        "type": "string",
+                        "description": "Channel access tokens as a means of authentication for the channel",
+                    },
+                    "user_id": {
+                        "type": "string",
+                        "description": "User ID of the target user"},
+                    "index": {
+                        "type": "integer",
+                        "description": "Index of the news to be pushed to the user"},
+                },
+                "required": ["toekn", "user_id", "index"],
+            },
+        }),
+    ];
+
+    let payload = serde_json::to_string(&json!({
+        "model": model,
+        "messages": messages,
+        "functions": functions,
+        "function_call": "auto",
+    }))?;
+
+    let response = send_chat_request_json(api_key.as_str(), url.as_str(), payload).await?;
+
+    println!("{}", response);
+    let response_json: serde_json::Value = serde_json::from_str(&response)?;
+    let function_call = if let Some(choices) = response_json["choices"].as_array() {
+        if let Some(function_call) = choices[0]["message"]["function_call"].as_object() {
+            let function_name = function_call["name"].as_str().unwrap();
+            let function_args = function_call["arguments"].as_str().unwrap();
+
+            Some(json!({
+                "name": function_name,
+                "arguments": function_args,
+            }))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    Ok(function_call.unwrap_or(json!({})).to_string())
+}
+
 pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std::error::Error>> {
     let api_secret = get_config("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
@@ -59,7 +139,7 @@ pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std:
         messages: vec![ChatMessage {
             role: "user".to_owned(),
             content: format!(
-                "這是今天 daily hacker news 的 top 10, 幫我融會貫通, 重點整理:並且找出最重要的新聞以及相關的重要關鍵字, 並且適當的分段, 分段符號使用('\n\n'): {}",
+                "這是今日的 Hacker News 前十大新聞，以綜合分析的方式進行概括，並條列出各新聞的主要重點。同時，請將各項新聞中最重要的一項與其相關的關鍵字突顯出來。最後，請以適當的段落劃分，並以('\n\n')作為分段符號。: {}",
                 stories
             ),
         }],
@@ -82,7 +162,7 @@ pub async fn translate_to_zhtw(content: String) -> Result<String, Box<dyn std::e
         model: model.to_owned(),
         messages: vec![ChatMessage {
             role: "user".to_owned(),
-            content: format!("翻譯成繁體中文: {}", content),
+            content: format!("翻譯成 zh-tw: {}", content),
         }],
         temperature: 0.05,
         max_tokens: 2048,
@@ -94,7 +174,11 @@ pub async fn translate_to_zhtw(content: String) -> Result<String, Box<dyn std::e
     Ok(res_content)
 }
 
-async fn send_chat_request(api_secret: String, url: String, request: ChatRequest) -> Result<String, Box<dyn std::error::Error>> {
+async fn send_chat_request(
+    api_secret: String,
+    url: String,
+    request: ChatRequest,
+) -> Result<String, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let json_body = serde_json::to_string(&request)?;
 
@@ -110,4 +194,20 @@ async fn send_chat_request(api_secret: String, url: String, request: ChatRequest
 
     let res_content = response_struct.choices[0].message.content.clone();
     Ok(res_content)
+}
+
+async fn send_chat_request_json(
+    api_secret: &str,
+    url: &str,
+    payload: String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+
+    let res = client
+        .post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {}", api_secret))
+        .body(payload)
+        .send().await?;
+    Ok(res.text().await?)
 }

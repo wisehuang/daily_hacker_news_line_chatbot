@@ -12,6 +12,45 @@ use warp::{
     Rejection, Reply,
 };
 
+pub async fn conversation_handler(content: Bytes) -> Result<impl Reply, Rejection> {
+    let conversions = String::from_utf8(content.to_vec()).unwrap();
+    let res = chatgpt::run_conversation(conversions).await;
+
+    let function_call: Value =
+        serde_json::from_str(res.as_ref().unwrap().as_str()).unwrap();
+    let function_name = function_call["name"].as_str().unwrap();
+
+    let arguments_value = function_call["arguments"].as_str().unwrap().replace("\n", "");
+    let arguments: Value = serde_json::from_str(arguments_value.as_str()).unwrap();
+
+    println!("arguments: {}", arguments);
+
+    if function_name == "push_summary" {
+        let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
+        println!("index: {}", index);
+    }
+
+    match res {
+        Ok(result) => {
+            let response = warp::reply::json(&json!({
+                "success": true,
+                "result": result.as_str(),
+            }));
+            Ok(warp::reply::with_status(response, StatusCode::OK))
+        }
+        Err(error) => {
+            let response = warp::reply::json(&json!({
+                "success": false,
+                "error": error.to_string(),
+            }));
+            Ok(warp::reply::with_status(
+                response,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ))
+        }
+    }
+}
+
 pub async fn parse_request_handler(
     x_line_signature: String,
     body: Bytes,
@@ -38,15 +77,22 @@ pub async fn parse_request_handler(
     let text = json_value["events"]
         .get(0)
         .and_then(|event| event["message"].get("text"))
-        .and_then(|text| text.as_str());
+        .and_then(|text| text.as_str())
+        .unwrap_or_default()
+        .to_string();
 
     let reply_token = json_value["events"][0]["replyToken"].as_str();
 
     let user_id = json_value["events"][0]["source"]["userId"].as_str();
 
-    match text {
-        // Handle "today" command
-        Some("today") => {
+    let res = chatgpt::run_conversation(text).await.unwrap();
+
+    if !res.is_empty() {
+        let function_call: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
+        let function_name = function_call["name"].as_str().unwrap();
+        let arguments_value = function_call["arguments"].as_str().unwrap().replace("\n", "");
+
+        if function_name == "reply_latest_story" {
             reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
                 .await
                 .map_err(|_e| {
@@ -58,17 +104,14 @@ pub async fn parse_request_handler(
                     .into_response()
                 })
                 .unwrap();
-        }
-        // if input is number
-        Some(index_str)
-            if index_str
-                .parse::<usize>()
-                .map_or(false, |index| index >= 1 && index <= 10) => 
-        {
+        } else if function_name == "push_summary" {            
+            let arguments: Value = serde_json::from_str(arguments_value.as_str()).unwrap();
+            let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
+
             push_summary(
                 &channel_token,
                 &user_id.unwrap(),
-                index_str.parse::<usize>().unwrap(),
+                index,
             )
             .await
             .map_err(|_e| {
@@ -81,10 +124,15 @@ pub async fn parse_request_handler(
             })
             .unwrap();
         }
-        _ => {}
+    } else {
+        let error_msg = json!({"success": false, "error": "Error sending message"});
+        warp::reply::with_status(
+            warp::reply::json(&error_msg),
+            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+        )
+        .into_response();
     }
 
-    // Return success response
     Ok(warp::reply::with_status(
         warp::reply::json(&json!({"success": true})),
         warp::http::StatusCode::OK,
