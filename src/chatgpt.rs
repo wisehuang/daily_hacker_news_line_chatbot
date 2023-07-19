@@ -155,7 +155,7 @@ pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std:
     Ok(res_content)
 }
 
-pub async fn translate_to_zhtw(content: String) -> Result<String, Box<dyn std::error::Error>> {
+pub async fn translate(content: String, language_code: String) -> Result<String, Box<dyn std::error::Error>> {
     let api_secret = get_config("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
     let model = get_config("chatgpt.model");
@@ -164,7 +164,7 @@ pub async fn translate_to_zhtw(content: String) -> Result<String, Box<dyn std::e
         model: model.to_owned(),
         messages: vec![ChatMessage {
             role: "user".to_owned(),
-            content: format!("翻譯成 zh-tw: {}", content),
+            content: format!("translate to {}: {}", language_code, content),
         }],
         temperature: 0.05,
         max_tokens: 2048,
@@ -173,6 +173,28 @@ pub async fn translate_to_zhtw(content: String) -> Result<String, Box<dyn std::e
         presence_penalty: 0.0,
     };
     let res_content = send_chat_request(api_secret, url, request).await?;
+    Ok(res_content)
+}
+
+pub async fn get_language_code(text: String) -> Result<String, Box<dyn std::error::Error>> {
+    let api_secret = get_config("chatgpt.secret");
+    let url = get_config("chatgpt.chat_completions_url");
+    let model = get_config("chatgpt.model");
+
+    let request = ChatRequest {
+        model: model.to_owned(),
+        messages: vec![ChatMessage {
+            role: "user".to_owned(),
+            content: format!("identify the input is which language, and response it only to ISO 639-1 standard language codes and country code without any more explaination: {}", text),
+        }],
+        temperature: 0.0,
+        max_tokens: 2048,
+        top_p: 1.0,
+        frequency_penalty: 0.0,
+        presence_penalty: 0.0,
+    };
+    let res_content = send_chat_request(api_secret, url, request).await?;
+
     Ok(res_content)
 }
 

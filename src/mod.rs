@@ -74,6 +74,9 @@ pub async fn parse_request_handler(
         .unwrap_or_default()
         .to_string();
 
+
+    let language_code = chatgpt::get_language_code(text.to_owned()).await.unwrap();
+
     let reply_token = json_value["events"][0]["replyToken"].as_str();
 
     let user_id = json_value["events"][0]["source"]["userId"].as_str();
@@ -84,7 +87,7 @@ pub async fn parse_request_handler(
 
     log::info!("function_call: {}", function_call);
 
-    function_call_handler(function_call, channel_token, reply_token, user_id).await;
+    function_call_handler(function_call, channel_token, reply_token, user_id, language_code).await;
 
     Ok(warp::reply::with_status(
         warp::reply::json(&json!({"success": true})),
@@ -92,7 +95,7 @@ pub async fn parse_request_handler(
     ))
 }
 
-async fn function_call_handler(function_call: Value, channel_token: String, reply_token: Option<&str>, user_id: Option<&str>) {
+async fn function_call_handler(function_call: Value, channel_token: String, reply_token: Option<&str>, user_id: Option<&str>, language_code: String) {
     match function_call.get("name").and_then(Value::as_str) {
         Some("reply_latest_story") => {
             reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
@@ -112,7 +115,7 @@ async fn function_call_handler(function_call: Value, channel_token: String, repl
                 serde_json::from_str(function_call["arguments"].as_str().unwrap()).unwrap();
             let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
 
-            push_summary(&channel_token, &user_id.unwrap(), index)
+            push_summary(&channel_token, &user_id.unwrap(), language_code, index)
                 .await
                 .map_err(|_e| {
                     let error_msg = json!({"success": false, "error": "Error push summary"});
@@ -225,13 +228,13 @@ async fn reply_latest_story(token: &str, reply_token: &str) -> Result<impl Reply
     request_handler::handle_send_request(token, json_body, url.as_str()).await
 }
 
-async fn push_summary(token: &str, user_id: &str, index: usize) -> Result<impl Reply, Rejection> {
+async fn push_summary(token: &str, user_id: &str, language_code: String, index: usize) -> Result<impl Reply, Rejection> {
     let stories = readrss::get_last_hn_stories().await;
     let story = &stories[index - 1];
 
     let story_summary = kagi::get_kagi_summary(story.storylink.to_owned()).await;
 
-    let summary_zhtw = chatgpt::translate_to_zhtw(story_summary).await.unwrap();
+    let summary_zhtw = chatgpt::translate(story_summary, language_code).await.unwrap();
 
     let result = push_message(token, user_id, summary_zhtw.as_str()).await;
     result
