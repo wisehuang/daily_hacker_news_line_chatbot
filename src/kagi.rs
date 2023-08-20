@@ -71,7 +71,7 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
             let res_content = _response.data.output.clone();
             return res_content.replace("\n", "");
         },
-        Err(e) => {
+        Err(_e) => {
             return "No summary found.".to_string();
         }
     }

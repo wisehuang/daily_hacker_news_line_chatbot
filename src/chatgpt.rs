@@ -1,4 +1,4 @@
-use crate::config_helper::get_config;
+use crate::config_helper::{get_config, get_prompt};
 use crate::json;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
@@ -80,7 +80,7 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
         }),
         json!({
             "name": "push_summary",
-            "description": "Push the selected news (by index, start from 1, maximum is 10) summary to the user.",
+            "description": "In the ChatGPT function call, push the selected news summary to the user by index (starting from 1, with a maximum index of 10). The index is passed as an array of integers, with a maximum array size of 5. If the array size exceeds 5, please return error without calling this function.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,9 +91,13 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
                     "user_id": {
                         "type": "string",
                         "description": "User ID of the target user"},
-                    "index": {
-                        "type": "integer",
-                        "description": "Index of the news to be pushed to the user"},
+                    "indexes": {
+                        "type": "array",
+                        "description": "An array of integers, with a maximum array size of 5, representing the indices of news articles that will be sent to the user.",
+                        "items": {
+                            "type": "integer"
+                          },
+                    },
                 },
                 "required": ["toekn", "user_id", "index"],
             },
@@ -109,7 +113,7 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
 
     let response = send_chat_request_json(api_key.as_str(), url.as_str(), payload).await?;
 
-    println!("{}", response);
+    println!("response from function calling: {}", response);
     let response_json: serde_json::Value = serde_json::from_str(&response)?;
     let function_call = if let Some(choices) = response_json["choices"].as_array() {
         if let Some(function_call) = choices[0]["message"]["function_call"].as_object() {
@@ -135,15 +139,13 @@ pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std:
     let api_secret = get_config("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
     let model = get_config("chatgpt.model");
+    let prompt = get_prompt("prompt.summary_all");
 
     let request = ChatRequest {
         model: model.to_owned(),
         messages: vec![ChatMessage {
             role: "user".to_owned(),
-            content: format!(
-                "這是今日的 Hacker News 前十大新聞，以綜合分析的方式進行概括，並條列出各新聞的主要重點。同時，請將各項新聞中最重要的一項與其相關的關鍵字突顯出來。最後，請以適當的段落劃分，並以('\n\n')作為分段符號。: {}",
-                stories
-            ),
+            content: format!("{} {}", prompt, stories),            
         }],
         temperature: 0.05,
         max_tokens: 2048,
@@ -180,12 +182,13 @@ pub async fn get_language_code(text: String) -> Result<String, Box<dyn std::erro
     let api_secret = get_config("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
     let model = get_config("chatgpt.model");
+    let prompt = get_prompt("prompt.get_language_code");
 
     let request = ChatRequest {
         model: model.to_owned(),
         messages: vec![ChatMessage {
             role: "user".to_owned(),
-            content: format!("identify the input is which language, and response it only to ISO 639-1 standard language codes and country code without any more explaination: {}", text),
+            content: format!("{} {}",prompt, text),
         }],
         temperature: 0.0,
         max_tokens: 2048,
@@ -217,6 +220,7 @@ async fn send_chat_request(
     let response_struct: ChatCompletion = serde_json::from_str(&response_text)?;
 
     let res_content = response_struct.choices[0].message.content.clone();
+
     Ok(res_content)
 }
 
@@ -234,4 +238,16 @@ async fn send_chat_request_json(
         .body(payload)
         .send().await?;
     Ok(res.text().await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_run_conversation() {
+        let content = "第一, 第二, 第三, 第四, 第五,第六篇".to_string();
+        let result = run_conversation(content).await.unwrap();
+        assert!(result.contains("\"indexes\": [1, 2, 3]"));
+    }
 }

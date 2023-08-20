@@ -74,7 +74,6 @@ pub async fn parse_request_handler(
         .unwrap_or_default()
         .to_string();
 
-
     let language_code = chatgpt::get_language_code(text.to_owned()).await.unwrap();
 
     let reply_token = json_value["events"][0]["replyToken"].as_str();
@@ -87,7 +86,14 @@ pub async fn parse_request_handler(
 
     log::info!("function_call: {}", function_call);
 
-    function_call_handler(function_call, channel_token, reply_token, user_id, language_code).await;
+    function_call_handler(
+        function_call,
+        channel_token,
+        reply_token,
+        user_id,
+        language_code,
+    )
+    .await;
 
     Ok(warp::reply::with_status(
         warp::reply::json(&json!({"success": true})),
@@ -95,7 +101,13 @@ pub async fn parse_request_handler(
     ))
 }
 
-async fn function_call_handler(function_call: Value, channel_token: String, reply_token: Option<&str>, user_id: Option<&str>, language_code: String) {
+async fn function_call_handler(
+    function_call: Value,
+    channel_token: String,
+    reply_token: Option<&str>,
+    user_id: Option<&str>,
+    language_code: String,
+) {
     match function_call.get("name").and_then(Value::as_str) {
         Some("reply_latest_story") => {
             reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
@@ -113,9 +125,15 @@ async fn function_call_handler(function_call: Value, channel_token: String, repl
         Some("push_summary") => {
             let arguments: Value =
                 serde_json::from_str(function_call["arguments"].as_str().unwrap()).unwrap();
-            let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
+            let indexes = arguments
+                .get("indexes")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .map(|i| i.as_u64().unwrap() as usize)
+                .collect::<Vec<usize>>();
 
-            push_summary(&channel_token, &user_id.unwrap(), language_code, index)
+            push_summary(&channel_token, &user_id.unwrap(), language_code, indexes)
                 .await
                 .map_err(|_e| {
                     let error_msg = json!({"success": false, "error": "Error push summary"});
@@ -128,10 +146,15 @@ async fn function_call_handler(function_call: Value, channel_token: String, repl
                 .unwrap();
         }
         _ => {
-            push_message(
+            push_messages(
                 &channel_token,
                 &user_id.unwrap(),
-                function_call["message"].as_str().unwrap(),
+                function_call["message"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|m| m.as_str().unwrap().to_string())
+                    .collect(),
             )
             .await
             .map_err(|_e| {
@@ -228,18 +251,28 @@ async fn reply_latest_story(token: &str, reply_token: &str) -> Result<impl Reply
     request_handler::handle_send_request(token, json_body, url.as_str()).await
 }
 
-async fn push_summary(token: &str, user_id: &str, language_code: String, index: usize) -> Result<impl Reply, Rejection> {
+async fn push_summary(
+    token: &str,
+    user_id: &str,
+    language_code: String,
+    indexes: Vec<usize>,
+) -> Result<impl Reply, Rejection> {
     let stories = readrss::get_last_hn_stories().await;
-    let story = &stories[index - 1];
 
-    let story_summary = kagi::get_kagi_summary(story.storylink.to_owned()).await;
+    let mut messages = Vec::new();
 
-    let summary_zhtw = chatgpt::translate(story_summary, language_code).await.unwrap();
+    for index in indexes {
+        let story = &stories[index - 1];
+        let story_summary = kagi::get_kagi_summary(story.storylink.to_owned()).await;
+        let summary_zhtw = chatgpt::translate(story_summary, language_code.to_owned())
+            .await
+            .unwrap();
+        messages.push(summary_zhtw);
+    }
 
-    let result = push_message(token, user_id, summary_zhtw.as_str()).await;
+    let result = push_messages(token, user_id, messages).await;
     result
 }
-
 async fn reply_error(
     token: &str,
     reply_token: &str,
@@ -248,17 +281,22 @@ async fn reply_error(
     reply_message(token, reply_token, error_msg).await
 }
 
-async fn push_message(
+async fn push_messages(
     token: &str,
     user_id: &str,
-    text: &str,
+    text: Vec<String>,
 ) -> Result<impl Reply + Sized + Sized, Rejection> {
+    let messages: Vec<LineMessage> = text
+        .iter()
+        .map(|t| LineMessage {
+            message_type: "text".to_string(),
+            text: t.to_string(),
+        })
+        .collect();
+
     let request = LineSendMessageRequest {
         to: user_id.to_string(),
-        messages: vec![LineMessage {
-            message_type: "text".to_string(),
-            text: text.to_string(),
-        }],
+        messages,
     };
 
     let json_body = serde_json::to_string(&request).unwrap();
