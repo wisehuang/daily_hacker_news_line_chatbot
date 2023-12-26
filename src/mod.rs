@@ -149,12 +149,7 @@ async fn function_call_handler(
             push_messages(
                 &channel_token,
                 &user_id.unwrap(),
-                function_call["message"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|m| m.as_str().unwrap().to_string())
-                    .collect(),
+                vec![function_call["message"].as_str().unwrap().to_string()],
             )
             .await
             .map_err(|_e| {
