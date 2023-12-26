@@ -160,7 +160,7 @@ pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std:
 pub async fn translate(content: String, language_code: String) -> Result<String, Box<dyn std::error::Error>> {
     let api_secret = get_config("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
-    let model = get_config("chatgpt.model");
+    let model = get_config("chatgpt.translate_model");
 
     let request = ChatRequest {
         model: model.to_owned(),
