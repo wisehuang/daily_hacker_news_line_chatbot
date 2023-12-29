@@ -268,13 +268,6 @@ async fn push_summary(
     let result = push_messages(token, user_id, messages).await;
     result
 }
-async fn reply_error(
-    token: &str,
-    reply_token: &str,
-    error_msg: &str,
-) -> Result<impl Reply, Rejection> {
-    reply_message(token, reply_token, error_msg).await
-}
 
 async fn push_messages(
     token: &str,
@@ -303,29 +296,6 @@ async fn push_messages(
     request_handler::handle_send_request(token, json_body, url.as_str()).await
 }
 
-async fn reply_message(
-    token: &str,
-    reply_token: &str,
-    text: &str,
-) -> Result<impl Reply + Sized + Sized, Rejection> {
-    let message = LineMessage {
-        message_type: "text".to_string(),
-        text: text.to_string(),
-    };
-
-    let request = LineMessageRequest {
-        replyToken: reply_token.to_string(),
-        messages: vec![message],
-    };
-
-    let json_body = serde_json::to_string(&request).unwrap();
-
-    log::info!("{}", &json_body);
-
-    let url = config_helper::get_config("message.reply_url");
-
-    request_handler::handle_send_request(token, json_body, url.as_str()).await
-}
 
 async fn convert_stories_to_message() -> LineMessage {
     let message_text = combine_stories().await;
