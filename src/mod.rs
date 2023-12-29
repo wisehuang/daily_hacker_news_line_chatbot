@@ -50,7 +50,7 @@ pub async fn parse_request_handler(
 ) -> Result<impl Reply, Rejection> {
     // Check if the signature is valid
     line_helper::is_signature_valid(x_line_signature, &body)
-        .map_err(|e| {
+        .map_err(|_e| {
             let error_msg = json!({"success": false, "error": "Invalid signature"});
             warp::reply::with_status(
                 warp::reply::json(&error_msg),
