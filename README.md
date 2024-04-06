@@ -2,9 +2,12 @@
 
 This is a LINE chatbot that sends daily hacker news to friends. The news source is obtained from https://www.daemonology.net/hn-daily/.
 
+This project is a Rust-based application that utilizes various libraries and frameworks such as reqwest, serde, warp, and tokio. It is designed to handle various tasks including reading RSS feeds, handling HTTP requests, and interacting with the OpenAI GPT-4 model, and Kagi Universal Summary API.
+
 ## Requirements
 
 To run this project, you need to have the following:
+* [Rust](https://www.rust-lang.org/tools/install)
 * A LINE developer account
 * A channel access token and channel secret for your LINE channel
 * An OpenAI API token
