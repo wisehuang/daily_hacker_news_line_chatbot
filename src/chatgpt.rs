@@ -1,7 +1,8 @@
-use crate::config_helper::{get_config, get_prompt};
-use crate::json;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+
+use crate::config_helper::{get_config, get_prompt};
+use crate::json;
 
 #[derive(Debug, Serialize)]
 struct ChatRequest {
@@ -62,6 +63,8 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
 
     let functions = vec![
         json!({
+            "type": "function",
+            "function": {
             "name": "reply_latest_story",
             "description": "Get the latest story from daily Hacker News RSS feed",
             "parameters": {
@@ -77,20 +80,15 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
                 },
                 "required": ["token", "reply_token"],
             },
-        }),
+        }}),
         json!({
+            "type": "function",
+            "function": {
             "name": "push_summary",
             "description": "In the ChatGPT function call, push the selected news summary to the user by index (starting from 1, with a maximum index of 10). The index is passed as an array of integers, with a maximum array size of 5. If the array size exceeds 5, please return error without calling this function.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "token": {
-                        "type": "string",
-                        "description": "Channel access tokens as a means of authentication for the channel",
-                    },
-                    "user_id": {
-                        "type": "string",
-                        "description": "User ID of the target user"},
                     "indexes": {
                         "type": "array",
                         "description": "An array of integers, with a maximum array size of 5, representing the indices of news articles that will be sent to the user.",
@@ -99,24 +97,24 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
                           },
                     },
                 },
-                "required": ["toekn", "user_id", "index"],
+                "required": ["indexes"],
             },
-        }),
+        }}),
     ];
 
     let payload = serde_json::to_string(&json!({
         "model": model,
         "messages": messages,
-        "functions": functions,
-        "function_call": "auto",
+        "tools": functions,
+        "tool_choice": "auto",
     }))?;
 
     let response = send_chat_request_json(api_key.as_str(), url.as_str(), payload).await?;
 
-    println!("response from function calling: {}", response);
+    log::info!("response from function calling: {}", response);
     let response_json: serde_json::Value = serde_json::from_str(&response)?;
     let function_call = if let Some(choices) = response_json["choices"].as_array() {
-        if let Some(function_call) = choices[0]["message"]["function_call"].as_object() {
+        if let Some(function_call) = choices[0]["message"]["tool_calls"][0]["function"].as_object() {
             let function_name = function_call["name"].as_str().unwrap();
             let function_args = function_call["arguments"].as_str().unwrap();
 
@@ -132,7 +130,10 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
     } else {
         None
     };
-    Ok(function_call.unwrap_or(json!({})).to_string())
+
+    let tool_choice_json = function_call.unwrap_or(json!({})).to_string();
+    log::info!("function_call: {}", tool_choice_json);
+    Ok(tool_choice_json)
 }
 
 pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std::error::Error>> {
@@ -145,7 +146,7 @@ pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std:
         model: model.to_owned(),
         messages: vec![ChatMessage {
             role: "user".to_owned(),
-            content: format!("{} {}", prompt, stories),            
+            content: format!("{} {}", prompt, stories),
         }],
         temperature: 0.05,
         max_tokens: 2048,
@@ -157,7 +158,10 @@ pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std:
     Ok(res_content)
 }
 
-pub async fn translate(content: String, language_code: String) -> Result<String, Box<dyn std::error::Error>> {
+pub async fn translate(
+    content: String,
+    language_code: String,
+) -> Result<String, Box<dyn std::error::Error>> {
     let api_secret = get_config("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
     let model = get_config("chatgpt.translate_model");
@@ -188,7 +192,7 @@ pub async fn get_language_code(text: String) -> Result<String, Box<dyn std::erro
         model: model.to_owned(),
         messages: vec![ChatMessage {
             role: "user".to_owned(),
-            content: format!("{} {}",prompt, text),
+            content: format!("{} {}", prompt, text),
         }],
         temperature: 0.0,
         max_tokens: 2048,
@@ -246,8 +250,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_conversation() {
-        let content = "第一, 第二, 第三, 第四, 第五,第六篇".to_string();
+        let content = "第一, 第二, 第三".to_string();
         let result = run_conversation(content).await.unwrap();
-        assert!(result.contains("\"indexes\": [1, 2, 3]"));
+        println!("result: {}", result);
+        let expected_result = r#"{"arguments":"{\n  \"indexes\": [1, 2, 3]\n}","name":"push_summary"}"#;
+        assert_eq!(result, expected_result);
     }
 }

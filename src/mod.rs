@@ -1,15 +1,13 @@
 use bytes::Bytes;
 use serde_json::{json, Value};
-
-use crate::{chatgpt, config_helper, kagi, line_helper, readrss, request_handler};
-
-use crate::line_helper::{
-    LineBroadcastRequest, LineMessage, LineMessageRequest, LineSendMessageRequest,
-};
-
 use warp::{
     http::{Response, StatusCode},
     Rejection, Reply,
+};
+
+use crate::{chatgpt, config_helper, kagi, line_helper, readrss, request_handler};
+use crate::line_helper::{
+    LineBroadcastRequest, LineMessage, LineMessageRequest, LineSendMessageRequest,
 };
 
 pub async fn conversation_handler(content: Bytes) -> Result<impl Reply, Rejection> {
@@ -28,8 +26,8 @@ pub async fn conversation_handler(content: Bytes) -> Result<impl Reply, Rejectio
             log::info!("arguments: {}", arguments);
 
             if function_name == "push_summary" {
-                let index = arguments.get("index").and_then(Value::as_i64).unwrap() as usize;
-                log::info!("index: {}", index);
+                let index = arguments["indexes"].as_array().unwrap();
+                log::info!("index: {:?}", index); // Convert Vec<usize> to string representation
             }
 
             let response = warp::reply::json(&json!(function_call));
@@ -48,18 +46,48 @@ pub async fn parse_request_handler(
     x_line_signature: String,
     body: Bytes,
 ) -> Result<impl Reply, Rejection> {
-    // Check if the signature is valid
-    line_helper::is_signature_valid(x_line_signature, &body)
-        .map_err(|_e| {
-            let error_msg = json!({"success": false, "error": "Invalid signature"});
-            warp::reply::with_status(
-                warp::reply::json(&error_msg),
-                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .into_response()
-        })
-        .unwrap();
+    let validation_result = validate_signature(x_line_signature, &body).await;
 
+    // Clone or copy necessary data for the new task
+    let body_clone = body.clone();
+
+    // Process the other logic asynchronously
+    tokio::spawn(async move {
+        process_request(body_clone).await;
+    });
+
+    match validation_result {
+        Ok(()) => {
+            // Immediately return HTTP 200 OK after signature validation
+            Ok(warp::reply::with_status(
+                warp::reply::json(&json!({"success": true})),
+                StatusCode::OK,
+            ))
+        },
+        Err(e) => {
+            let error_msg = json!({"success": false, "error": "Invalid signature"});
+            Ok(warp::reply::with_status(
+                warp::reply::json(&error_msg),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ))
+        }
+    }
+}
+
+async fn validate_signature(
+    x_line_signature: String,
+    body: &Bytes,
+) -> Result<(), &'static str> {
+    match line_helper::is_signature_valid(x_line_signature, body) {
+        Ok(_) => Ok(()),
+        Err(_e) => {
+            log::error!("Invalid signature");
+            Err("Invalid signature")
+        }
+    }
+}
+
+async fn process_request(body: Bytes) {
     // Get the channel token from the configuration file
     let channel_token = config_helper::get_config("channel.token");
 
@@ -93,12 +121,7 @@ pub async fn parse_request_handler(
         user_id,
         language_code,
     )
-    .await;
-
-    Ok(warp::reply::with_status(
-        warp::reply::json(&json!({"success": true})),
-        warp::http::StatusCode::OK,
-    ))
+        .await;
 }
 
 async fn function_call_handler(

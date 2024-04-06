@@ -1,7 +1,9 @@
-use scraper::{Html, Selector};
-use rss::{Channel, Item};
-use serde::{Deserialize, Serialize};
 use std::error::Error;
+
+use rss::{Channel, Item};
+use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
+
 use crate::config_helper::get_config;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,4 +47,15 @@ pub async fn get_last_hn_stories() -> Vec<Story> {
         })
         .collect();
     stories
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn get_last_hn_stories_returns_stories_for_valid_feed() {
+        let stories = get_last_hn_stories().await;
+        println!("{:?}", stories);
+    }
 }
