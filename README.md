@@ -28,6 +28,22 @@ cargo build --release
 ```
 6. The service will start listening to port 3030.
 
+## Docker Usage
+
+This application can be built and run using Docker. We use `podman` as a drop-in replacement for Docker. If you have Docker installed, you can replace `podman` with `docker` in the commands below.
+
+To build the Docker image, navigate to the project root directory and run the following command:
+
+```bash
+podman build -f docker/Dockerfile -t daily_hacker_news_bot .
+```
+
+To run the Docker container and expose port 3030, use the following command:
+```bash
+podman run -p 3030:3030 localhost/daily_hacker_news_bot:latest
+```
+Remember to replace `podman` with `docker` if you are using Docker.
+
 ## Daily Hacker News Chatbot
 ![QR Code](https://github.com/wisehuang/daily_hacker_news_line_chatbot/blob/main/623yruqr.png)
 
