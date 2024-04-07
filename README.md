@@ -38,12 +38,12 @@ This application can be built and run using Docker. We use `podman` as a drop-in
 To build the Docker image, navigate to the project root directory and run the following command:
 
 ```bash
-podman build -f docker/Dockerfile -t daily_hacker_news_bot .
+podman build -f docker/Dockerfile -t daily_hacker_news_line_chatbot .
 ```
 
 To run the Docker container and expose port 3030, use the following command:
 ```bash
-podman run -p 3030:3030 localhost/daily_hacker_news_bot:latest
+podman run -p 3030:3030 localhost/daily_hacker_news_line_chatbot:latest
 ```
 Remember to replace `podman` with `docker` if you are using Docker.
 
