@@ -44,8 +44,8 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
 
     let request = KagiSummaryRequest {
         url: tldr_page_url,
-        engine: engine,
-        target_language: target_language,
+        engine,
+        target_language,
     };
 
     let json_body = serde_json::to_string(&request).unwrap();
@@ -66,13 +66,13 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
 
     let response_struct: Result<KagiSummaryResponse, serde_json::Error> = serde_json::from_str(&response_text);
 
-    match response_struct {
+    return match response_struct {
         Ok(_response) => {
             let res_content = _response.data.output.clone();
-            return res_content.replace("\n", "");
+            res_content.replace("\n", "")
         },
         Err(_e) => {
-            return "No summary found.".to_string();
+            "No summary found.".to_string()
         }
     }
 }

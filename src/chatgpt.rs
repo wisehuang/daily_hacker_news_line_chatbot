@@ -136,19 +136,19 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
     Ok(tool_choice_json)
 }
 
-pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std::error::Error>> {
+pub async fn get_chatgpt_response(prompt_key: &str, content: String, temperature: f64, model_key: &str) -> Result<String, Box<dyn std::error::Error>> {
     let api_secret = get_config("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
-    let model = get_config("chatgpt.model");
-    let prompt = get_prompt("prompt.summary_all");
+    let model = get_config(model_key);
+    let prompt = get_prompt(prompt_key);
 
     let request = ChatRequest {
         model: model.to_owned(),
         messages: vec![ChatMessage {
             role: "user".to_owned(),
-            content: format!("{} {}", prompt, stories),
+            content: format!("{} {}", prompt, content),
         }],
-        temperature: 0.05,
+        temperature,
         max_tokens: 2048,
         top_p: 1.0,
         frequency_penalty: 0.0,
@@ -158,51 +158,17 @@ pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std:
     Ok(res_content)
 }
 
-pub async fn translate(
-    content: String,
-    language_code: String,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let api_secret = get_config("chatgpt.secret");
-    let url = get_config("chatgpt.chat_completions_url");
-    let model = get_config("chatgpt.translate_model");
-
-    let request = ChatRequest {
-        model: model.to_owned(),
-        messages: vec![ChatMessage {
-            role: "user".to_owned(),
-            content: format!("translate to {}: {}", language_code, content),
-        }],
-        temperature: 0.05,
-        max_tokens: 2048,
-        top_p: 1.0,
-        frequency_penalty: 0.0,
-        presence_penalty: 0.0,
-    };
-    let res_content = send_chat_request(api_secret, url, request).await?;
-    Ok(res_content)
+pub async fn get_chatgpt_summary(stories: String) -> Result<String, Box<dyn std::error::Error>> {
+    get_chatgpt_response("prompt.summary_all", stories, 0.05, "chatgpt.model").await
 }
 
 pub async fn get_language_code(text: String) -> Result<String, Box<dyn std::error::Error>> {
-    let api_secret = get_config("chatgpt.secret");
-    let url = get_config("chatgpt.chat_completions_url");
-    let model = get_config("chatgpt.model");
-    let prompt = get_prompt("prompt.get_language_code");
+    get_chatgpt_response("prompt.get_language_code", text, 0.0, "chatgpt.model").await
+}
 
-    let request = ChatRequest {
-        model: model.to_owned(),
-        messages: vec![ChatMessage {
-            role: "user".to_owned(),
-            content: format!("{} {}", prompt, text),
-        }],
-        temperature: 0.0,
-        max_tokens: 2048,
-        top_p: 1.0,
-        frequency_penalty: 0.0,
-        presence_penalty: 0.0,
-    };
-    let res_content = send_chat_request(api_secret, url, request).await?;
-
-    Ok(res_content)
+pub async fn translate(content: String, language_code: String) -> Result<String, Box<dyn std::error::Error>> {
+    let content = format!("{}: {}", language_code, content);
+    get_chatgpt_response("prompt.translate", content, 0.05, "chatgpt.translate_model").await
 }
 
 async fn send_chat_request(
@@ -255,5 +221,22 @@ mod tests {
         println!("result: {}", result);
         let expected_result = r#"{"arguments":"{\n  \"indexes\": [1, 2, 3]\n}","name":"push_summary"}"#;
         assert_eq!(result, expected_result);
+    }
+
+    #[tokio::test]
+    async fn test_get_language_code() {
+        let text = "Hello, world!".to_string();
+        let result = get_language_code(text).await;
+
+        assert_eq!(result.unwrap(), "en-us");
+    }
+
+    #[tokio::test]
+    async fn test_translate() {
+        let content = "Hello, world!".to_string();
+        let language_code = "es".to_string(); // Spanish language code
+        let result = translate(content, language_code).await;
+
+        assert_eq!(result.unwrap(), "¡Hola, mundo!");
     }
 }

@@ -139,7 +139,7 @@ async fn function_call_handler(
                     let error_msg = json!({"success": false, "error": "Error reply latest story"});
                     warp::reply::with_status(
                         warp::reply::json(&error_msg),
-                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                     )
                     .into_response()
                 })
@@ -162,7 +162,7 @@ async fn function_call_handler(
                     let error_msg = json!({"success": false, "error": "Error push summary"});
                     warp::reply::with_status(
                         warp::reply::json(&error_msg),
-                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                     )
                     .into_response()
                 })
@@ -179,7 +179,7 @@ async fn function_call_handler(
                 let error_msg = json!({"success": false, "error": "Error push message"});
                 warp::reply::with_status(
                     warp::reply::json(&error_msg),
-                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    StatusCode::INTERNAL_SERVER_ERROR,
                 )
                 .into_response()
             })

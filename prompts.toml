@@ -1,3 +1,4 @@
 [prompt]
-summary_all = "This is today's top ten news on Hacker News, summarized through comprehensive analysis and listing the main points of each news. Also, please highlight the most important item and its related keywords in each news. Finally, please divide them into appropriate paragraphs with ('\n\n') as the paragraph separator, always return zh-tw: "
+summary_all = "這是今日的 Hacker News 前十大新聞，以綜合分析的方式進行概括，並條列出各新聞的主要重點。同時，請將各項新聞中最重要的一項與其相關的關鍵字突顯出來。最後，請以適當的段落劃分，並以('\n\n')作為分段符號。always response in zh-tw: "
 get_language_code = "identify the input is which language, and response it only to ISO 639-1 standard language codes and country code without any more explaination, if input is Chinese, always return zh-tw: "
+translate = "translate to "
