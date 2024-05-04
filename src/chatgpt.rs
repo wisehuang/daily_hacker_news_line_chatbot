@@ -100,6 +100,22 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
                 "required": ["indexes"],
             },
         }}),
+        json!({
+            "type": "function",
+            "function": {
+            "name": "push_url_summary",
+            "description": "In the ChatGPT function call, push the content summary to the user URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "An URL of a web page, which content will be summarized and push the summary to user.",
+                    },
+                },
+                "required": ["url"],
+            },
+        }}),
     ];
 
     let payload = serde_json::to_string(&json!({
@@ -212,6 +228,7 @@ async fn send_chat_request_json(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
     use super::*;
 
     #[tokio::test]
@@ -219,8 +236,28 @@ mod tests {
         let content = "第一, 第二, 第三".to_string();
         let result = run_conversation(content).await.unwrap();
         println!("result: {}", result);
-        let expected_result = r#"{"arguments":"{\n  \"indexes\": [1, 2, 3]\n}","name":"push_summary"}"#;
+        let expected_result = r#"{"arguments":"{\n  \"indexes\": [1,2,3]\n}","name":"push_summary"}"#;
         assert_eq!(result, expected_result);
+    }
+
+    #[tokio::test]
+    async fn test_url_summary() {
+        let url = "https://www.apple.com/apple-music/".to_string();
+        let result = run_conversation(url).await.unwrap();
+        println!("result: {}", result);
+        let json: Result<Value, _> = serde_json::from_str(result.as_str());
+        let url = match json {
+            Ok(data) => {
+                let arguments = data.get("arguments").unwrap().as_str().unwrap();
+                println!("arguments_str: {}", arguments);
+                let arguments_json: Value = serde_json::from_str(arguments).unwrap();
+                let url_str = arguments_json.get("url").unwrap().as_str().unwrap().to_string();
+                url_str
+            },
+            Err(e) => panic!("Problem with JSON: {:?}", e),
+        };
+        let expected_result = r#"https://www.apple.com/apple-music/"#;
+        assert_eq!(url, expected_result);
     }
 
     #[tokio::test]

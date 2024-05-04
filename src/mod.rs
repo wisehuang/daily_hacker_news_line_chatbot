@@ -4,6 +4,7 @@ use warp::{
     http::{Response, StatusCode},
     Rejection, Reply,
 };
+use warp::hyper::Body;
 
 use crate::{chatgpt, config_helper, kagi, line_helper, readrss, request_handler};
 use crate::line_helper::{
@@ -64,7 +65,7 @@ pub async fn parse_request_handler(
                 StatusCode::OK,
             ))
         },
-        Err(e) => {
+        Err(_e) => {
             let error_msg = json!({"success": false, "error": "Invalid signature"});
             Ok(warp::reply::with_status(
                 warp::reply::json(&error_msg),
@@ -131,61 +132,82 @@ async fn function_call_handler(
     user_id: Option<&str>,
     language_code: String,
 ) {
-    match function_call.get("name").and_then(Value::as_str) {
+    let function_name = function_call.get("name").and_then(Value::as_str);
+
+    match function_name {
         Some("reply_latest_story") => {
-            reply_latest_story(&channel_token, &reply_token.unwrap().to_string())
-                .await
-                .map_err(|_e| {
-                    let error_msg = json!({"success": false, "error": "Error reply latest story"});
-                    warp::reply::with_status(
-                        warp::reply::json(&error_msg),
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                    )
-                    .into_response()
-                })
-                .unwrap();
+            handle_reply_latest_story(&channel_token, &reply_token.unwrap().to_string()).await;
         }
         Some("push_summary") => {
-            let arguments: Value =
-                serde_json::from_str(function_call["arguments"].as_str().unwrap()).unwrap();
-            let indexes = arguments
-                .get("indexes")
-                .and_then(Value::as_array)
-                .unwrap()
-                .iter()
-                .map(|i| i.as_u64().unwrap() as usize)
-                .collect::<Vec<usize>>();
-
-            push_summary(&channel_token, &user_id.unwrap(), language_code, indexes)
-                .await
-                .map_err(|_e| {
-                    let error_msg = json!({"success": false, "error": "Error push summary"});
-                    warp::reply::with_status(
-                        warp::reply::json(&error_msg),
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                    )
-                    .into_response()
-                })
-                .unwrap();
+            handle_push_summary(&channel_token, &user_id.unwrap(), language_code, &function_call).await;
+        }
+        Some("push_url_summary") => {
+            handle_push_url_summary(&channel_token, &user_id.unwrap(), language_code, &function_call).await;
         }
         _ => {
-            push_messages(
-                &channel_token,
-                &user_id.unwrap(),
-                vec![function_call["message"].as_str().unwrap().to_string()],
-            )
-            .await
-            .map_err(|_e| {
-                let error_msg = json!({"success": false, "error": "Error push message"});
-                warp::reply::with_status(
-                    warp::reply::json(&error_msg),
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                )
-                .into_response()
-            })
-            .unwrap();
+            handle_push_messages(&channel_token, &user_id.unwrap(), &function_call).await;
         }
     }
+}
+
+async fn handle_reply_latest_story(channel_token: &str, reply_token: &str) {
+    match reply_latest_story(channel_token, reply_token).await {
+        Ok(_) => {},
+        Err(_e) => {
+            handle_error_response("Error reply latest story").await;
+        }
+    }
+}
+
+async fn handle_push_summary(channel_token: &str, user_id: &str, language_code: String, function_call: &Value) {
+    let arguments: Value = serde_json::from_str(function_call["arguments"].as_str().unwrap()).unwrap();
+    let indexes = arguments
+        .get("indexes")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|i| i.as_u64().unwrap() as usize)
+        .collect::<Vec<usize>>();
+
+    match push_summary(channel_token, user_id, language_code, indexes).await {
+        Ok(_) => {},
+        Err(_e) => {
+            handle_error_response("Error push summary").await;
+        }
+    }
+}
+
+async fn handle_push_messages(channel_token: &str, user_id: &str, function_call: &Value) {
+    match push_messages(
+        channel_token,
+        user_id,
+        vec![function_call["message"].as_str().unwrap().to_string()],
+    ).await {
+        Ok(_) => {},
+        Err(_e) => {
+            handle_error_response("Error push messages").await;
+        }
+    }
+}
+
+async fn handle_push_url_summary(channel_token: &str, user_id: &str, language_code: String, function_call: &Value) {
+    let arguments = function_call.get("arguments").unwrap().as_str().unwrap();
+    let arguments_json: Value = serde_json::from_str(arguments).unwrap();
+    let url = arguments_json.get("url").unwrap().as_str().unwrap().to_string();
+    match push_url_summary(channel_token, user_id, language_code, url).await {
+        Ok(_) => {},
+        Err(_e) => {
+            handle_error_response("Error push url summary").await;
+        }
+    }
+}
+
+async fn handle_error_response(error: &str) -> Response<Body> {
+    let error_msg = json!({"success": false, "error": error});
+    warp::reply::with_status(
+        warp::reply::json(&error_msg),
+        StatusCode::INTERNAL_SERVER_ERROR,
+    ).into_response()
 }
 
 pub async fn get_latest_stories() -> Result<impl Reply, Rejection> {
@@ -287,6 +309,23 @@ async fn push_summary(
             .unwrap();
         messages.push(summary_zhtw);
     }
+
+    let result = push_messages(token, user_id, messages).await;
+    result
+}
+
+async fn push_url_summary(
+    token: &str,
+    user_id: &str,
+    language_code: String,
+    url: String,
+) -> Result<impl Reply, Rejection> {
+
+    let story_summary = kagi::get_kagi_summary(url.to_owned()).await;
+    let summary_zhtw = chatgpt::translate(story_summary, language_code.to_owned())
+            .await
+            .unwrap();
+    let messages = vec![summary_zhtw];
 
     let result = push_messages(token, user_id, messages).await;
     result
