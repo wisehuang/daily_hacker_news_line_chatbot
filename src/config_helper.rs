@@ -11,6 +11,10 @@ pub fn get_config(config_name: &str) -> String {
     return get_config_by_file(config_name, "config.toml");
 }
 
+pub fn get_secret(secret_name: &str) -> String {
+    return get_config_by_file(secret_name, "secrets.toml");
+}
+
 pub fn get_prompt(prompt: &str) -> String {
     return get_config_by_file(prompt, "prompts.toml");
 }

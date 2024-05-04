@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::error::Error;
 
-use crate::config_helper::get_config;
+use crate::config_helper::{get_config, get_secret};
 
 #[derive(Serialize, Deserialize)]
 pub struct LineMessage {
@@ -53,7 +53,7 @@ pub fn generate_signature(channel_secret: &str, body: &[u8]) -> String {
 }
 
 pub fn is_signature_valid(x_line_signature: String, body: &Bytes) -> Result<(), Box<dyn Error>> {
-    let channel_secret = get_config("channel.secret");
+    let channel_secret = get_secret("channel.secret");
 
     log::info!("channel secret: {}", channel_secret);
 

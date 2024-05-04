@@ -1,4 +1,4 @@
-use crate::config_helper::get_config;
+use crate::config_helper::{get_config, get_secret};
 use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ struct KagiSummaryResponse {
 }
 
 pub async fn get_kagi_summary(tldr_page_url: String) -> String {
-    let api_token = get_config("kagi.token");
+    let api_token = get_secret("kagi.token");
 
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();

@@ -7,6 +7,7 @@ use warp::{
 use warp::hyper::Body;
 
 use crate::{chatgpt, config_helper, kagi, line_helper, readrss, request_handler};
+use crate::config_helper::{get_config, get_secret};
 use crate::line_helper::{
     LineBroadcastRequest, LineMessage, LineMessageRequest, LineSendMessageRequest,
 };
@@ -90,7 +91,7 @@ async fn validate_signature(
 
 async fn process_request(body: Bytes) {
     // Get the channel token from the configuration file
-    let channel_token = config_helper::get_config("channel.token");
+    let channel_token = get_secret("channel.token");
 
     // Parse the body as a LineWebhookRequest
     let json_value: Value = serde_json::from_slice(&body).unwrap();
@@ -142,7 +143,7 @@ async fn function_call_handler(
             handle_push_summary(&channel_token, &user_id.unwrap(), language_code, &function_call).await;
         }
         Some("push_url_summary") => {
-            handle_push_url_summary(&channel_token, &user_id.unwrap(), language_code, &function_call).await;
+            handle_push_url_summary(&channel_token, &user_id.unwrap(), "zh-tw".to_string(), &function_call).await;
         }
         _ => {
             handle_push_messages(&channel_token, &user_id.unwrap(), &function_call).await;
@@ -246,14 +247,14 @@ fn reply_error_msg(error: &'static str, status: StatusCode) -> Response<Bytes> {
 }
 
 pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
-    let token = &config_helper::get_config("channel.token");
+    let token = &get_secret("channel.token");
     let message = convert_stories_to_message().await;
 
     let request_body = LineBroadcastRequest {
         messages: vec![message],
     };
 
-    let url = config_helper::get_config("message.broadcast_url");
+    let url = get_config("message.broadcast_url");
 
     let json_body = serde_json::to_string(&request_body).unwrap();
 
@@ -261,9 +262,9 @@ pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
 }
 
 pub async fn broadcast_daily_summary() -> Result<impl Reply, Rejection> {
-    let token = &config_helper::get_config("channel.token");
+    let token = get_secret("channel.token");
 
-    let url = config_helper::get_config("message.broadcast_url");
+    let url = get_config("message.broadcast_url");
 
     let message = get_chatgpt_summary().await;
 
@@ -273,7 +274,7 @@ pub async fn broadcast_daily_summary() -> Result<impl Reply, Rejection> {
 
     let json_body = serde_json::to_string(&request_body).unwrap();
 
-    request_handler::handle_send_request(token, json_body, url.as_str()).await
+    request_handler::handle_send_request(token.as_str(), json_body, url.as_str()).await
 }
 
 async fn reply_latest_story(token: &str, reply_token: &str) -> Result<impl Reply, Rejection> {
@@ -353,7 +354,7 @@ async fn push_messages(
 
     log::info!("{}", &json_body);
 
-    let url = config_helper::get_config("message.push_url");
+    let url = get_config("message.push_url");
 
     request_handler::handle_send_request(token, json_body, url.as_str()).await
 }

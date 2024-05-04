@@ -1,7 +1,7 @@
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 
-use crate::config_helper::{get_config, get_prompt};
+use crate::config_helper::{get_config, get_prompt, get_secret};
 use crate::json;
 
 #[derive(Debug, Serialize)]
@@ -52,7 +52,7 @@ struct Message {
 }
 
 pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::error::Error>> {
-    let api_key = get_config("chatgpt.secret");
+    let api_key = get_secret("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
     let model = get_config("chatgpt.model");
 
@@ -153,7 +153,7 @@ pub async fn run_conversation(content: String) -> Result<String, Box<dyn std::er
 }
 
 pub async fn get_chatgpt_response(prompt_key: &str, content: String, temperature: f64, model_key: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let api_secret = get_config("chatgpt.secret");
+    let api_secret = get_secret("chatgpt.secret");
     let url = get_config("chatgpt.chat_completions_url");
     let model = get_config(model_key);
     let prompt = get_prompt(prompt_key);
