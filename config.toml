@@ -5,8 +5,8 @@ push_url = "https://api.line.me/v2/bot/message/push"
 
 [chatgpt]
 chat_completions_url = "https://api.openai.com/v1/chat/completions"
-model = "gpt-4"
-translate_model = "gpt-3.5-turbo-1106"
+model = "gpt-4o"
+translate_model = "gpt-3.5-turbo"
 
 [kagi]
 kagi_summarize_url = "https://kagi.com/api/v0/summarize"
