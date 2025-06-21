@@ -6,38 +6,67 @@ use warp::{
 };
 use warp::hyper::Body;
 
-use crate::{chatgpt, config_helper, kagi, line_helper, readrss, request_handler};
+use crate::{chatgpt, config_helper, errors::AppError, kagi, line_helper, readrss, request_handler};
 use crate::config_helper::{get_config, get_secret};
 use crate::line_helper::{
     LineBroadcastRequest, LineMessage, LineMessageRequest, LineSendMessageRequest,
 };
 
 pub async fn conversation_handler(content: Bytes) -> Result<impl Reply, Rejection> {
-    let conversions = String::from_utf8(content.to_vec()).unwrap();
-    let res = chatgpt::run_conversation(conversions).await;
+    let conversions = String::from_utf8(content.to_vec())
+        .map_err(|e| warp::reject::custom(AppError::InvalidUtf8(e)))?;
+    let res = match chatgpt::run_conversation(conversions).await {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("ChatGPT conversation failed: {}", e);
+            return Err(warp::reject::custom(AppError::ChatGpt(e.to_string())));
+        }
+    };
 
-    let function_call: Value = serde_json::from_str(res.as_ref().unwrap().as_str()).unwrap();
+    let function_call: Value = match serde_json::from_str(res.as_str()) {
+        Ok(value) => value,
+        Err(e) => {
+            log::error!("Failed to parse function call JSON: {}", e);
+            return Err(warp::reject::custom(AppError::JsonParse(e)));
+        }
+    };
 
     log::info!("function_call: {}", function_call);
 
     match function_call.get("name").and_then(Value::as_str) {
         Some(function_name) => {
-            let arguments_value = function_call["arguments"].as_str().unwrap();
-            let arguments: Value = serde_json::from_str(arguments_value).unwrap();
+            let arguments_value = match function_call["arguments"].as_str() {
+                Some(args) => args,
+                None => {
+                    log::error!("Missing arguments in function call");
+                    return Err(warp::reject::custom(AppError::MissingField("arguments".to_string())));
+                }
+            };
+            let arguments: Value = match serde_json::from_str(arguments_value) {
+                Ok(args) => args,
+                Err(e) => {
+                    log::error!("Failed to parse function arguments: {}", e);
+                    return Err(warp::reject::custom(AppError::JsonParse(e)));
+                }
+            };
 
             log::info!("arguments: {}", arguments);
 
             if function_name == "push_summary" {
-                let index = arguments["indexes"].as_array().unwrap();
-                log::info!("index: {:?}", index); // Convert Vec<usize> to string representation
+                if let Some(index) = arguments["indexes"].as_array() {
+                    log::info!("index: {:?}", index);
+                } else {
+                    log::warn!("Missing or invalid indexes in push_summary arguments");
+                }
             }
 
             let response = warp::reply::json(&json!(function_call));
             Ok(warp::reply::with_status(response, StatusCode::OK))
         }
         None => {
+            let message = function_call["message"].as_str().unwrap_or("No message available");
             let response = warp::reply::json(&json!({
-                "message": function_call["message"].as_str().unwrap(),
+                "message": message,
             }));
             Ok(warp::reply::with_status(response, StatusCode::OK))
         }
@@ -50,16 +79,14 @@ pub async fn parse_request_handler(
 ) -> Result<impl Reply, Rejection> {
     let validation_result = validate_signature(x_line_signature, &body).await;
 
-    // Clone or copy necessary data for the new task
-    let body_clone = body.clone();
-
-    // Process the other logic asynchronously
-    tokio::spawn(async move {
-        process_request(body_clone).await;
-    });
-
     match validation_result {
         Ok(()) => {
+            // Only spawn async task after successful validation
+            // This allows us to move body directly without cloning
+            tokio::spawn(async move {
+                process_request(body).await;
+            });
+
             // Immediately return HTTP 200 OK after signature validation
             Ok(warp::reply::with_status(
                 warp::reply::json(&json!({"success": true})),
@@ -67,6 +94,7 @@ pub async fn parse_request_handler(
             ))
         },
         Err(_e) => {
+            // Body is dropped here without cloning since validation failed
             let error_msg = json!({"success": false, "error": "Invalid signature"});
             Ok(warp::reply::with_status(
                 warp::reply::json(&error_msg),
@@ -94,7 +122,13 @@ async fn process_request(body: Bytes) {
     let channel_token = get_secret("channel.token");
 
     // Parse the body as a LineWebhookRequest
-    let json_value: Value = serde_json::from_slice(&body).unwrap();
+    let json_value: Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(e) => {
+            log::error!("Failed to parse JSON body: {}", e);
+            return;
+        }
+    };
 
     // Extract the text from the first message
     let text = json_value["events"]
@@ -104,15 +138,33 @@ async fn process_request(body: Bytes) {
         .unwrap_or_default()
         .to_string();
 
-    let language_code = chatgpt::get_language_code(text.to_owned()).await.unwrap();
+    let language_code = match chatgpt::get_language_code(text.to_owned()).await {
+        Ok(code) => code,
+        Err(e) => {
+            log::error!("Failed to get language code: {}", e);
+            "en".to_string() // Default fallback
+        }
+    };
 
     let reply_token = json_value["events"][0]["replyToken"].as_str();
 
     let user_id = json_value["events"][0]["source"]["userId"].as_str();
 
-    let res = chatgpt::run_conversation(text).await.unwrap();
+    let res = match chatgpt::run_conversation(text).await {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("ChatGPT conversation failed: {}", e);
+            return;
+        }
+    };
 
-    let function_call: Value = serde_json::from_str(res.as_str()).unwrap();
+    let function_call: Value = match serde_json::from_str(res.as_str()) {
+        Ok(value) => value,
+        Err(e) => {
+            log::error!("Failed to parse function call JSON: {}", e);
+            return;
+        }
+    };
 
     log::info!("function_call: {}", function_call);
 
@@ -137,16 +189,32 @@ async fn function_call_handler(
 
     match function_name {
         Some("reply_latest_story") => {
-            handle_reply_latest_story(&channel_token, &reply_token.unwrap().to_string()).await;
+            if let Some(token) = reply_token {
+                handle_reply_latest_story(&channel_token, &token.to_string()).await;
+            } else {
+                log::error!("Missing reply token for reply_latest_story");
+            }
         }
         Some("push_summary") => {
-            handle_push_summary(&channel_token, &user_id.unwrap(), language_code, &function_call).await;
+            if let Some(uid) = user_id {
+                handle_push_summary(&channel_token, uid, language_code, &function_call).await;
+            } else {
+                log::error!("Missing user ID for push_summary");
+            }
         }
         Some("push_url_summary") => {
-            handle_push_url_summary(&channel_token, &user_id.unwrap(), "zh-tw".to_string(), &function_call).await;
+            if let Some(uid) = user_id {
+                handle_push_url_summary(&channel_token, uid, "zh-tw".to_string(), &function_call).await;
+            } else {
+                log::error!("Missing user ID for push_url_summary");
+            }
         }
         _ => {
-            handle_push_messages(&channel_token, &user_id.unwrap(), &function_call).await;
+            if let Some(uid) = user_id {
+                handle_push_messages(&channel_token, uid, &function_call).await;
+            } else {
+                log::error!("Missing user ID for push_messages");
+            }
         }
     }
 }
@@ -161,14 +229,31 @@ async fn handle_reply_latest_story(channel_token: &str, reply_token: &str) {
 }
 
 async fn handle_push_summary(channel_token: &str, user_id: &str, language_code: String, function_call: &Value) {
-    let arguments: Value = serde_json::from_str(function_call["arguments"].as_str().unwrap()).unwrap();
-    let indexes = arguments
-        .get("indexes")
-        .and_then(Value::as_array)
-        .unwrap()
-        .iter()
-        .map(|i| i.as_u64().unwrap() as usize)
-        .collect::<Vec<usize>>();
+    let arguments_str = match function_call["arguments"].as_str() {
+        Some(args) => args,
+        None => {
+            log::error!("Missing arguments in function call");
+            return;
+        }
+    };
+    
+    let arguments: Value = match serde_json::from_str(arguments_str) {
+        Ok(args) => args,
+        Err(e) => {
+            log::error!("Failed to parse function arguments: {}", e);
+            return;
+        }
+    };
+    
+    let indexes = match arguments.get("indexes").and_then(Value::as_array) {
+        Some(arr) => arr.iter()
+            .filter_map(|i| i.as_u64().map(|u| u as usize))
+            .collect::<Vec<usize>>(),
+        None => {
+            log::error!("Missing or invalid indexes in arguments");
+            return;
+        }
+    };
 
     match push_summary(channel_token, user_id, language_code, indexes).await {
         Ok(_) => {},
@@ -179,10 +264,18 @@ async fn handle_push_summary(channel_token: &str, user_id: &str, language_code: 
 }
 
 async fn handle_push_messages(channel_token: &str, user_id: &str, function_call: &Value) {
+    let message = match function_call["message"].as_str() {
+        Some(msg) => msg.to_string(),
+        None => {
+            log::error!("Missing message in function call");
+            return;
+        }
+    };
+    
     match push_messages(
         channel_token,
         user_id,
-        vec![function_call["message"].as_str().unwrap().to_string()],
+        vec![message],
     ).await {
         Ok(_) => {},
         Err(_e) => {
@@ -192,9 +285,29 @@ async fn handle_push_messages(channel_token: &str, user_id: &str, function_call:
 }
 
 async fn handle_push_url_summary(channel_token: &str, user_id: &str, language_code: String, function_call: &Value) {
-    let arguments = function_call.get("arguments").unwrap().as_str().unwrap();
-    let arguments_json: Value = serde_json::from_str(arguments).unwrap();
-    let url = arguments_json.get("url").unwrap().as_str().unwrap().to_string();
+    let arguments_str = match function_call.get("arguments").and_then(|v| v.as_str()) {
+        Some(args) => args,
+        None => {
+            log::error!("Missing arguments in push_url_summary function call");
+            return;
+        }
+    };
+    
+    let arguments_json: Value = match serde_json::from_str(arguments_str) {
+        Ok(json) => json,
+        Err(e) => {
+            log::error!("Failed to parse push_url_summary arguments: {}", e);
+            return;
+        }
+    };
+    
+    let url = match arguments_json.get("url").and_then(|v| v.as_str()) {
+        Some(url_str) => url_str.to_string(),
+        None => {
+            log::error!("Missing URL in push_url_summary arguments");
+            return;
+        }
+    };
     match push_url_summary(channel_token, user_id, language_code, url).await {
         Ok(_) => {},
         Err(_e) => {
@@ -217,22 +330,31 @@ pub async fn get_latest_stories() -> Result<impl Reply, Rejection> {
 }
 
 pub async fn get_latest_title() -> Result<impl Reply, Rejection> {
-    let channel = readrss::read_feed()
-        .await
-        .map_err(|_| reply_error_msg("Error fetching feed", StatusCode::INTERNAL_SERVER_ERROR))
-        .unwrap();
+    let channel = match readrss::read_feed().await {
+        Ok(ch) => ch,
+        Err(_) => {
+            return Err(warp::reject::custom(AppError::Config("Error fetching feed".to_string())));
+        }
+    };
 
-    let latest_item = readrss::get_latest_item(&channel)
-        .ok_or_else(|| reply_error_msg("No items in feed", StatusCode::NOT_FOUND))
-        .unwrap();
+    let latest_item = match readrss::get_latest_item(&channel) {
+        Some(item) => item,
+        None => {
+            return Err(warp::reject::custom(AppError::Config("No items in feed".to_string())));
+        }
+    };
 
     let latest_title = latest_item.title().unwrap_or("Untitled item").to_string();
 
-    let response = Response::builder()
+    let response = match Response::builder()
         .header("content-type", "text/plain")
         .status(StatusCode::OK)
-        .body(Bytes::from(latest_title))
-        .unwrap();
+        .body(Bytes::from(latest_title)) {
+        Ok(resp) => resp,
+        Err(_) => {
+            return Err(warp::reject::custom(AppError::Config("Failed to build response".to_string())));
+        }
+    };
 
     Ok(response)
 }
@@ -243,7 +365,12 @@ fn reply_error_msg(error: &'static str, status: StatusCode) -> Response<Bytes> {
         .header("content-type", "text/plain")
         .status(status)
         .body(error_msg)
-        .unwrap()
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Bytes::from("Internal server error"))
+                .unwrap()
+        })
 }
 
 pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
@@ -256,7 +383,13 @@ pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
 
     let url = get_config("message.broadcast_url");
 
-    let json_body = serde_json::to_string(&request_body).unwrap();
+    let json_body = match serde_json::to_string(&request_body) {
+        Ok(body) => body,
+        Err(e) => {
+            log::error!("Failed to serialize broadcast request: {}", e);
+            return Err(warp::reject::custom(AppError::JsonParse(e)));
+        }
+    };
 
     request_handler::handle_send_request(token, json_body, url.as_str()).await
 }
@@ -272,7 +405,13 @@ pub async fn broadcast_daily_summary() -> Result<impl Reply, Rejection> {
         messages: vec![message],
     };
 
-    let json_body = serde_json::to_string(&request_body).unwrap();
+    let json_body = match serde_json::to_string(&request_body) {
+        Ok(body) => body,
+        Err(e) => {
+            log::error!("Failed to serialize daily summary request: {}", e);
+            return Err(warp::reject::custom(AppError::JsonParse(e)));
+        }
+    };
 
     request_handler::handle_send_request(token.as_str(), json_body, url.as_str()).await
 }
@@ -285,7 +424,13 @@ async fn reply_latest_story(token: &str, reply_token: &str) -> Result<impl Reply
         messages: vec![message],
     };
 
-    let json_body = serde_json::to_string(&request_body).unwrap();
+    let json_body = match serde_json::to_string(&request_body) {
+        Ok(body) => body,
+        Err(e) => {
+            log::error!("Failed to serialize reply request: {}", e);
+            return Err(warp::reject::custom(AppError::JsonParse(e)));
+        }
+    };
 
     let url = config_helper::get_config("message.reply_url");
 
@@ -304,10 +449,20 @@ async fn push_summary(
 
     for index in indexes {
         let story = &stories[index - 1];
-        let story_summary = kagi::get_kagi_summary(story.storylink.to_owned()).await;
-        let summary_zhtw = chatgpt::translate(story_summary, language_code.to_owned())
-            .await
-            .unwrap();
+        let story_summary = match kagi::get_kagi_summary(story.storylink.to_owned()).await {
+            Ok(summary) => summary,
+            Err(e) => {
+                log::error!("Failed to get Kagi summary for index {}: {}", index, e);
+                "Summary unavailable".to_string()
+            }
+        };
+        let summary_zhtw = match chatgpt::translate(story_summary.clone(), language_code.to_owned()).await {
+            Ok(translated) => translated,
+            Err(e) => {
+                log::error!("Failed to translate summary for index {}: {}", index, e);
+                story_summary // Use original if translation fails
+            }
+        };
         messages.push(summary_zhtw);
     }
 
@@ -322,10 +477,20 @@ async fn push_url_summary(
     url: String,
 ) -> Result<impl Reply, Rejection> {
 
-    let story_summary = kagi::get_kagi_summary(url.to_owned()).await;
-    let summary_zhtw = chatgpt::translate(story_summary, language_code.to_owned())
-            .await
-            .unwrap();
+    let story_summary = match kagi::get_kagi_summary(url.to_owned()).await {
+        Ok(summary) => summary,
+        Err(e) => {
+            log::error!("Failed to get Kagi summary for URL: {}", e);
+            "Summary unavailable".to_string()
+        }
+    };
+    let summary_zhtw = match chatgpt::translate(story_summary.clone(), language_code.to_owned()).await {
+        Ok(translated) => translated,
+        Err(e) => {
+            log::error!("Failed to translate URL summary: {}", e);
+            story_summary // Use original if translation fails
+        }
+    };
     let messages = vec![summary_zhtw];
 
     let result = push_messages(token, user_id, messages).await;
@@ -350,7 +515,13 @@ async fn push_messages(
         messages,
     };
 
-    let json_body = serde_json::to_string(&request).unwrap();
+    let json_body = match serde_json::to_string(&request) {
+        Ok(body) => body,
+        Err(e) => {
+            log::error!("Failed to serialize push message request: {}", e);
+            return Err(warp::reject::custom(AppError::JsonParse(e)));
+        }
+    };
 
     log::info!("{}", &json_body);
 
@@ -380,7 +551,13 @@ async fn combine_stories() -> String {
 
 async fn get_chatgpt_summary() -> LineMessage {
     let stories = combine_stories().await;
-    let summary = chatgpt::get_chatgpt_summary(stories).await.unwrap();
+    let summary = match chatgpt::get_chatgpt_summary(stories).await {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to get ChatGPT summary: {}", e);
+            "Summary unavailable".to_string()
+        }
+    };
 
     log::info!("summary message: {}", summary);
 

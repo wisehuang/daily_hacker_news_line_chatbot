@@ -1,4 +1,5 @@
 use crate::config_helper::{get_config, get_secret};
+use crate::errors::AppError;
 use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 
@@ -28,13 +29,15 @@ struct KagiSummaryResponse {
     data: Data,
 }
 
-pub async fn get_kagi_summary(tldr_page_url: String) -> String {
+pub async fn get_kagi_summary(tldr_page_url: String) -> Result<String, AppError> {
     let api_token = get_secret("kagi.token");
 
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
-    headers.insert(AUTHORIZATION, format!("Bot {}", api_token).parse().unwrap());
+    headers.insert(CONTENT_TYPE, "application/json".parse()
+        .map_err(|e| AppError::Config(format!("Invalid content type header: {}", e)))?);
+    headers.insert(AUTHORIZATION, format!("Bot {}", api_token).parse()
+        .map_err(|e| AppError::Config(format!("Invalid authorization header: {}", e)))?);
 
     let url = get_config("kagi.kagi_summarize_url");
 
@@ -48,7 +51,8 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
         target_language,
     };
 
-    let json_body = serde_json::to_string(&request).unwrap();
+    let json_body = serde_json::to_string(&request)
+        .map_err(|e| AppError::JsonParse(e))?;
 
     log::info!("Kagi summary API request: {}", json_body);
 
@@ -58,21 +62,24 @@ pub async fn get_kagi_summary(tldr_page_url: String) -> String {
         .body(json_body)
         .send()
         .await
-        .unwrap();
+        .map_err(|e| AppError::Network(e))?;
 
-    let response_text = response.text().await.unwrap();
+    let response_text = response.text().await
+        .map_err(|e| AppError::Network(e))?;
 
     log::info!("Kagi summary API response: {}", response_text);
 
     let response_struct: Result<KagiSummaryResponse, serde_json::Error> = serde_json::from_str(&response_text);
 
-    return match response_struct {
-        Ok(_response) => {
-            let res_content = _response.data.output.clone();
-            res_content.replace("\n", "")
+    match response_struct {
+        Ok(response) => {
+            let res_content = response.data.output.clone();
+            Ok(res_content.replace("\n", ""))
         },
-        Err(_e) => {
-            "No summary found.".to_string()
+        Err(e) => {
+            log::error!("Failed to parse Kagi response: {}", e);
+            log::debug!("Raw Kagi response: {}", response_text);
+            Err(AppError::JsonParse(e))
         }
     }
 }

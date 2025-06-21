@@ -5,6 +5,7 @@ use warp::Filter;
 
 mod chatgpt;
 mod config_helper;
+mod errors;
 mod kagi;
 mod line_helper;
 mod handler;
@@ -56,7 +57,8 @@ async fn main() {
         .or(send_line_broadcast_route)
         .or(broadcast_daily_summary_route)
         .or(conversation_route)
-        .with(log_filter);
+        .with(log_filter)
+        .recover(errors::handle_rejection);
 
     warp::serve(routes).run(([0, 0, 0, 0], 3030)).await;
 }
