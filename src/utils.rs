@@ -66,7 +66,7 @@ impl ConfigCache {
             channel_secret: config::get_secret("channel.secret"),
             channel_token: config::get_secret("channel.token"),
             chatgpt_secret: config::get_secret("chatgpt.secret"),
-            kagi_secret: config::get_secret("kagi.secret"),
+            kagi_secret: config::get_secret("kagi.token"),
         }
     }
 }

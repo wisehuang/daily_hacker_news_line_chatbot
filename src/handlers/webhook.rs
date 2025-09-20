@@ -12,21 +12,17 @@ pub async fn parse_request_handler(
     x_line_signature: String,
     body: Bytes,
 ) -> Result<impl Reply, Rejection> {
-    // First validate the signature
-    let validation_result = validate_signature(x_line_signature, &body).await;
-
-    // Clone the body for async processing
-    let body_clone = body.clone();
-
-    // Process the message asynchronously to return response quickly
-    tokio::spawn(async move {
-        process_request(body_clone).await;
-    });
-
-    // Return response based on validation
-    match validation_result {
+    // First validate the signature and only proceed on success
+    match validate_signature(x_line_signature, &body).await {
         Ok(()) => {
-            // Immediately return HTTP 200 OK after signature validation
+            // Clone the body for async processing
+            let body_clone = body.clone();
+
+            // Process the message asynchronously to return response quickly
+            tokio::spawn(async move {
+                process_request(body_clone).await;
+            });
+
             Ok(warp::reply::with_status(
                 warp::reply::json(&json!({"success": true})),
                 StatusCode::OK,

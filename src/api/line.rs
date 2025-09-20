@@ -11,7 +11,7 @@ use crate::utils::{HTTP_CLIENT, CONFIG_CACHE};
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Validate the LINE message signature
+/// Validate the LINE message signature using constant-time comparison
 pub fn validate_signature(signature: String, body: &Bytes) -> ApiResult<()> {
     let channel_secret = &CONFIG_CACHE.channel_secret;
     
@@ -19,16 +19,12 @@ pub fn validate_signature(signature: String, body: &Bytes) -> ApiResult<()> {
         .map_err(|_| ApiError::ValidationError("Invalid HMAC key length".to_string()))?;
     
     mac.update(body);
-    let result = mac.finalize();
-    let code_bytes = result.into_bytes();
-    
-    let expected_signature = general_purpose::STANDARD.encode(code_bytes);
-    
-    if signature == expected_signature {
-        Ok(())
-    } else {
-        Err(ApiError::ValidationError("Invalid signature".to_string()))
-    }
+    let signature_bytes = general_purpose::STANDARD
+        .decode(signature.as_bytes())
+        .map_err(|_| ApiError::ValidationError("Invalid signature".to_string()))?;
+
+    mac.verify_slice(&signature_bytes)
+        .map_err(|_| ApiError::ValidationError("Invalid signature".to_string()))
 }
 
 /// Create common headers for LINE API requests
