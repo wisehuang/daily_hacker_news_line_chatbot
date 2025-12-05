@@ -266,6 +266,11 @@ pub async fn get_chatgpt_summary(stories: String) -> ApiResult<String> {
     get_chatgpt_response("prompt.summary_all", stories, 0.05, false).await
 }
 
+/// Generate a concise summary for a single story
+pub async fn get_single_story_summary(story_title: String) -> ApiResult<String> {
+    get_chatgpt_response("prompt.summary_single", story_title, 0.05, false).await
+}
+
 /// Detect the language of text
 pub async fn get_language_code(text: String) -> ApiResult<String> {
     get_chatgpt_response("prompt.get_language_code", text, 0.0, false).await

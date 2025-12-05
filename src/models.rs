@@ -32,12 +32,22 @@ pub enum ApiError {
 /// API result type
 pub type ApiResult<T> = Result<T, ApiError>;
 
-/// LINE API message model
+/// LINE API message model (supports both text and flex messages)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineMessage {
     #[serde(rename = "type")]
     pub message_type: String,
-    pub text: String,
+
+    // Text message fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+
+    // Flex message fields
+    #[serde(skip_serializing_if = "Option::is_none", rename = "altText")]
+    pub alt_text: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents: Option<serde_json::Value>,
 }
 
 /// Request structure for sending messages to LINE

@@ -52,9 +52,8 @@ pub async fn get_latest_stories() -> ApiResult<Vec<Story>> {
     // Parse the HTML to extract stories
     let html = Html::parse_document(description);
     
-    // Extract story links and titles; Daemonology renders each entry as
-    // `<a class="storylink" href=...>Title</a>` so target the anchor itself
-    let selector = match Selector::parse("a.storylink") {
+    // Extract story links and titles
+    let selector = match Selector::parse(".storylink a") {
         Ok(selector) => selector,
         Err(_) => return Err(ApiError::ExternalServiceError("Failed to parse HTML selector".to_string())),
     };

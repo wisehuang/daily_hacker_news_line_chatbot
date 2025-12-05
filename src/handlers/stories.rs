@@ -98,18 +98,31 @@ pub async fn send_line_broadcast() -> Result<impl Reply, Rejection> {
             return Ok(utils::json_error(error_msg, StatusCode::INTERNAL_SERVER_ERROR));
         }
     };
-    
-    // Format the stories
-    let stories_text = stories
-        .iter()
-        .enumerate()
-        .map(|(i, story)| format!("{}. {} {}", i + 1, story.story, story.storylink))
-        .collect::<Vec<String>>()
-        .join("\n\n");
 
-    // Create LINE message
-    let messages = vec![line::create_text_message(&stories_text)];
-    
+    // Generate summaries for each story concurrently
+    let summary_futures: Vec<_> = stories
+        .iter()
+        .map(|story| chatgpt::get_single_story_summary(story.story.clone()))
+        .collect();
+
+    let summaries = futures::future::join_all(summary_futures).await;
+
+    // Pair stories with summaries, using default text for failed summaries
+    let stories_with_summaries: Vec<_> = stories
+        .into_iter()
+        .zip(summaries.into_iter())
+        .map(|(story, summary_result)| {
+            let summary = summary_result.unwrap_or_else(|e| {
+                log::warn!("Failed to get summary for story '{}': {:?}", story.story, e);
+                "摘要生成失敗".to_string()
+            });
+            (story, summary)
+        })
+        .collect();
+
+    // Create Flex carousel message
+    let messages = vec![line::create_stories_carousel(&stories_with_summaries)];
+
     // Send broadcast
     let channel_token = &CONFIG_CACHE.channel_token;
     match line::broadcast_message(channel_token, messages).await {
@@ -164,10 +177,10 @@ pub async fn broadcast_daily_summary() -> Result<impl Reply, Rejection> {
             return Ok(utils::json_error(error_msg, StatusCode::INTERNAL_SERVER_ERROR));
         }
     };
-    
-    // Create LINE message
-    let messages = vec![line::create_text_message(&summary)];
-    
+
+    // Create Flex bubble message for summary
+    let messages = vec![line::create_summary_bubble(&summary)];
+
     // Send broadcast
     let channel_token = &CONFIG_CACHE.channel_token;
     match line::broadcast_message(channel_token, messages).await {
@@ -220,14 +233,14 @@ pub async fn push_story_summaries(
     
     // Get summary from ChatGPT
     let mut summary = chatgpt::get_chatgpt_summary(stories_text).await?;
-    
+
     // Translate if needed
     if language_code != "en" && language_code != "zh-tw" {
         summary = chatgpt::translate(summary, language_code.to_string()).await?;
     }
-    
-    // Create message and send
-    let message = line::create_text_message(&summary);
+
+    // Create Flex bubble message and send
+    let message = line::create_summary_bubble(&summary);
     line::push_message(token, user_id, vec![message]).await
 }
 
@@ -245,14 +258,14 @@ pub async fn push_url_summary(
 
     // Get summary from Kagi
     let mut summary = kagi::summarize_url(url).await?;
-    
+
     // Translate if needed
     if language_code != "en" && language_code != "zh-tw" {
         summary = chatgpt::translate(summary, language_code.to_string()).await?;
     }
-    
-    // Create message and send
-    let message = line::create_text_message(&summary);
+
+    // Create Flex bubble message and send
+    let message = line::create_summary_bubble(&summary);
     line::push_message(token, user_id, vec![message]).await
 }
 
